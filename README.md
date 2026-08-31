@@ -23,18 +23,22 @@ AI-powered **digital evidence investigation platform** for authenticity assessme
 | Phase 4.4 — Explainability Validation & Benchmark | Complete |
 | Phase 4.5 — Advanced Explainability & Trust Layer | Complete |
 | Phase 3 Product — Auth / Cases / Evidence / APIs | Complete |
-| Phase 5 — Product / reports / hardening | Pending |
+| Phase 5 — Reports / Hardening / Docker / E2E Tests | Complete |
 
 Roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 
+---
+
 ## Hardware requirements
 
-- Windows 11
+- Windows 11 / Linux (Docker)
 - **8 GB RAM**
 - CPU-first (no dedicated GPU required)
 - Prefer `num_workers=0` DataLoader defaults
 
-## Installation
+---
+
+## Quick start (Local development)
 
 ```bash
 # From repository root
@@ -46,11 +50,47 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-# Phase 4.5 SHAP image explanations also need OpenCV (pulled by requirements.txt):
-#   shap + opencv-python-headless  (do not also install opencv-python)
+# Install CPU-optimized PyTorch (smaller, no NVIDIA needed)
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 copy .env.example .env
+
+# Initialize database + run
+python backend/run.py
 ```
+
+- Home: http://127.0.0.1:5000/
+- Health: http://127.0.0.1:5000/health
+- API prefix: `/api/*` (JSON, Flask-Login session cookies)
+
+---
+
+## Docker deployment (Phase 5)
+
+CPU-first container with persistent volumes (database, uploads, reports, logs, investigation artifacts).
+
+```bash
+# Build + start
+docker-compose up --build -d
+
+# Check health
+docker-compose ps
+curl http://127.0.0.1:5000/health
+
+# Stop + keep volumes
+docker-compose down
+```
+
+Volumes mounted:
+- `maya-db` → SQLite DB
+- `maya-uploads` → Evidence files
+- `maya-reports` → Generated PDF reports
+- `maya-logs` → Server logs
+- `maya-investigations` → AI/XAI investigation artifacts
+
+Docs: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+
+---
 
 ## Dataset workflow
 
@@ -71,7 +111,11 @@ python -m pytest tests/test_dataset.py -q
 
 Details: [`docs/DATASET.md`](docs/DATASET.md) · [`docs/DATASET_VERSIONING.md`](docs/DATASET_VERSIONING.md)
 
-## Training (Phase 3.2)
+---
+
+## AI Pipeline
+
+### Training (Phase 3.2)
 
 ```bash
 python scripts/train.py --profile debug
@@ -83,7 +127,7 @@ python -m pytest tests/test_training.py -q
 
 Logs: `logs/training.log` · Artefacts: `artifacts/phase3/sprint2/`
 
-## Evaluation (Phase 3.3)
+### Evaluation (Phase 3.3)
 
 ```bash
 python scripts/evaluate.py --threshold 0.5
@@ -92,7 +136,7 @@ python -m pytest tests/test_evaluation.py -q
 
 Artefacts: `artifacts/phase3/sprint3/`
 
-## Inference (Phase 3.4)
+### Inference (Phase 3.4)
 
 ```bash
 python scripts/predict.py path\to\image.jpg
@@ -102,7 +146,7 @@ python -m pytest tests/test_inference.py -q
 
 Artefacts: `artifacts/phase3/sprint4/`
 
-## Inference benchmarks (Phase 3.5)
+### Inference benchmarks (Phase 3.5)
 
 ```bash
 python scripts/benchmark.py
@@ -111,6 +155,8 @@ python -m pytest tests/test_benchmark.py -q
 ```
 
 Artefacts: `artifacts/phase3/benchmark/`
+
+---
 
 ## Explainability (Phase 4)
 
@@ -139,7 +185,7 @@ ExplainabilityEngine(ExplainabilityConfig(device_preference="cpu")).compare(
     r"path\to\image.jpg"
 )
 
-# Analytics on heatmaps (Sprint 4.3) — does not regenerate CAMs
+# Analytics on heatmaps (Sprint 4.3)
 from ai.explainability.analytics import ExplanationAnalyticsEngine, AnalyticsConfig
 
 ExplanationAnalyticsEngine(AnalyticsConfig()).analyze_from_heatmap_images(
@@ -165,26 +211,125 @@ AdvancedExplainabilityEngine(AdvancedXAIConfig(device_preference="cpu")).analyze
 python -m pytest tests/test_gradcam.py tests/test_multi_explainer.py `
   tests/test_explanation_analytics.py tests/test_explainability_benchmark.py `
   tests/test_shap.py tests/test_faithfulness.py tests/test_counterfactual.py `
-  tests/test_fusion.py tests/test_trust.py tests/test_audit.py -q
+  tests/test_fusion.py tests/test_trust.py -q
 ```
 
-Artefacts: `artifacts/phase4/sprint{1..5}/`  
+Artefacts: `artifacts/phase4/sprint{1..5}/`
 Docs: [`PHASE4_SPRINT1.md`](docs/PHASE4_SPRINT1.md) · [`SPRINT2`](docs/PHASE4_SPRINT2.md) · [`SPRINT3`](docs/PHASE4_SPRINT3.md) · [`SPRINT4`](docs/PHASE4_SPRINT4.md) · [`SPRINT5`](docs/PHASE4_SPRINT5.md)
 
-## Product APIs (Phase 3 — Auth / Cases / Evidence)
+---
 
-Flask-Login sessions + SQLAlchemy models under `backend/app/`.
+## Product APIs (Phase 3 + Phase 5)
+
+Flask-Login sessions + SQLAlchemy models under `backend/app/`. All protected routes use `@login_required_api` decorator.
 
 ```bash
 python backend/run.py
-# POST /api/auth/register  /api/auth/login  GET /api/auth/me
-# POST /api/cases  …  POST /api/evidence/cases/{id}  …  POST /api/evidence/{id}/analyze
+```
 
+### Full API reference: [`docs/API.md`](docs/API.md)
+
+### Auth
+- `POST /api/auth/register` — Register user (if `ALLOW_PUBLIC_REGISTRATION=true`)
+- `POST /api/auth/login` — Start session
+- `POST /api/auth/logout` — End session
+- `GET  /api/auth/me` — Current user profile
+
+### Cases
+- `POST /api/cases` — Create investigation case
+- `GET  /api/cases` — List own cases (admin sees all)
+- `GET  /api/cases/{id}` — Case details (ownership enforced)
+- `PATCH /api/cases/{id}` — Update case metadata
+- `POST /api/cases/{id}/close` — Close case
+
+### Evidence
+- `POST /api/evidence/cases/{id}` — Upload evidence (multipart/form-data) — **SHA-256 computed server-side; client hashes NEVER trusted
+- `GET  /api/evidence/cases/{id}` — List evidence in case
+- `GET  /api/evidence/{id}` — Evidence metadata
+- `POST /api/evidence/{id}/verify-integrity` — Recompute SHA-256 on-disk; compare with stored hash
+
+### Analysis / Investigation (real AI inference + XAI)
+- `POST /api/evidence/{id}/analyze` — Run EfficientNet-B0 inference + optional XAI
+- `GET  /api/analysis/{id}` — Retrieve analysis results
+- `GET  /api/investigations/{id}` — Alias for above
+
+Analysis request body (opt-in expensive methods:
+```json
+{
+  "generate_explanation": true,
+  "explainer": "gradcam",
+  "verify_before_analyze": true,
+  "advanced_xai": {
+    "shap": true,
+    "faithfulness": true,
+    "counterfactual": true,
+    "fusion": true,
+    "trust": true
+  }
+}
+```
+
+### PDF Reports (Phase 5)
+- `POST /api/analysis/{id}/report` — Generate signed, hashed investigation PDF
+- `GET  /api/analysis/{id}/reports` — List reports for an analysis
+- `GET  /api/reports/{id}` — Report metadata
+- `GET  /api/reports/{id}/download` — Binary PDF download (path-traversal-safe)
+
+Report includes: case & evidence metadata, authenticity assessment, SHA-256 integrity, XAI visualizations, advanced XAI artifact refs, audit timeline, investigator notes, and standard disclaimer. Source: [`report_service.py`](backend/app/services/report_service.py)
+
+### Audit Trail
+- `GET /api/audit` — ADMIN: all events; regular user: own events only
+
+Event types: `USER_REGISTERED`, `USER_LOGIN`, `USER_LOGOUT`, `CASE_CREATED`, `CASE_UPDATED`, `CASE_CLOSED`, `EVIDENCE_UPLOADED`, `EVIDENCE_ACCESSED`, `EVIDENCE_VERIFIED`, `ANALYSIS_STARTED`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`, `XAI_GENERATED`, `REPORT_GENERATED`
+
+### Product API tests:
+```bash
 python -m pytest tests/test_auth_api.py tests/test_cases_api.py `
   tests/test_evidence_api.py tests/test_analysis_api.py -q
 ```
 
-Docs: [`PHASE3_PRODUCT.md`](docs/PHASE3_PRODUCT.md) · [`PHASE3_PRODUCT_ARCHITECTURE.md`](docs/PHASE3_PRODUCT_ARCHITECTURE.md)
+Product docs: [`PHASE3_PRODUCT.md`](docs/PHASE3_PRODUCT.md) · [`PHASE3_PRODUCT_ARCHITECTURE.md`](docs/PHASE3_PRODUCT_ARCHITECTURE.md)
+
+---
+
+## End-to-End tests (Phase 5)
+
+Genuine E2E flow with real AI inference (non-mocked):
+
+```bash
+python -m pytest tests/test_e2e_product.py -q -v
+```
+
+Covered flows:
+1. Register → Login → Create Case → Upload Evidence → **Verify SHA-256 integrity → **Run real EfficientNet-B0 inference → **Persist to DB → **Audit trail → **Artifact directory creation
+2. Cross-user authorization enforcement (403 at every layer)
+3. Tampered evidence integrity detection (MODIFIED)
+
+Diagnostic script:
+```bash
+python scripts/_diag_product_ai.py
+```
+
+---
+
+## Security (Phase 5 hardening)
+
+| Control | Implementation |
+|---|---|
+| Passwords | Werkzeug argon2-family hashing |
+| Sessions | HTTP-only, SameSite=Lax cookies |
+| Authorization | Owner OR ADMIN at every service call (cases/evidence/analysis/report) |
+| Integrity | Server SHA-256 on upload + re-verify API; client hashes ignored |
+| Filenames | UUID-based; never client names on disk |
+| Path traversal | `.resolve()` + `startswith(root)` on all downloads |
+| Error handling | Safe JSON envelope; stack traces never leak to client |
+| Audit logs | Append-only; secrets (password/token/secret/auth) scrubbed before insert |
+| Uploads | MIME + extension + size double-checked |
+| DoS gates | SHAP/fusion/counterfactual only on explicit `advanced_xai` opt-in |
+
+Full details: [`docs/SECURITY.md`](docs/SECURITY.md)
+
+---
 
 ## Processing pipeline
 
@@ -203,56 +348,97 @@ from ai.datasets.dataset_config import SplitName
 loader = create_dataloader(SplitName.TRAIN, batch_size=16, transform_name="train")
 ```
 
+---
+
 ## Folder structure
 
 ```
 MAYA/
 ├── ai/
-│   ├── datasets/          # Corpus pipeline + DataLoaders
-│   ├── models/            # EfficientNet-B0 + factory
-│   ├── training/          # Training CLI / callbacks
+│   ├── datasets/          # Corpus pipeline + DataLoaders + versioning
+│   ├── models/            # EfficientNet-B0 + model factory
+│   ├── training/          # Training CLI / callbacks / logging
 │   ├── evaluation/        # Metrics + offline eval
-│   ├── inference/         # Investigation prediction
-│   ├── benchmark/         # Inference performance suite
-│   └── explainability/    # Phase 4 XAI (explainers, analytics, benchmark)
-├── backend/               # Flask application shell
-├── frontend/              # Templates & static assets
+│   ├── inference/         # Investigation prediction pipeline
+│   ├── benchmark/     # Inference performance suite
+│   ├── engine/            # Trainer + checkpoint + experiment history
+│   └── explainability/    # Phase 4 XAI (explainers, analytics, benchmark, SHAP, fusion, trust)
+├── backend/               # Flask application (product APIs)
+│   ├── app/
+│   │   ├── api/            # JSON route blueprints (auth/cases/evidence/analysis/audit)
+│   │   ├── services/       # Business logic + ownership checks
+│   │   ├── models/         # SQLAlchemy entities + enums
+│   │   ├── audit/        # Append-only audit service
+│   │   ├── integrations/ # AI bridge (backend→ai/)
+│   │   ├── storage/      # Evidence file storage
+│   │   ├── security/    # Password + session helpers
+│   │   ├── config/      # Config classes
+│   │   ├── database/  # DB init
+│   │   └── exceptions.py  # Safe error model
+├── frontend/              # Templates & static assets (simple web shell)
 ├── dataset/
 │   ├── raw/               # Immutable source
-│   ├── processed/         # Active train/val/test
-│   ├── versions/          # Sealed metadata
-│   └── reports/
+│   ├── versions/       # Sealed metadata + CURRENT pointer
+│   └── reports/          # Dataset pipeline reports
 ├── artifacts/
-│   ├── checkpoints/       # best.pt / last.pt (local; gitignored)
 │   ├── phase3/            # Train / eval / infer / bench outputs
-│   └── phase4/            # Explainability sprint artefacts
+│   ├── phase4/            # Explainability sprint artefacts
+│   └── investigations/  # Per-case AI/XAI investigation runs (INV-{ID}/)
 ├── docs/
 ├── tests/
-└── scripts/
+├── scripts/
+├── uploads/             # Evidence uploads (gitignored, Docker volume)
+├── reports/             # Generated PDFs (gitignored, Docker volume)
+├── logs/                # Server logs (gitignored, Docker volume)
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
 ```
+
+---
+
+## Database entities (SQLAlchemy)
+
+- **User** — id, email, username, role (INVESTIGATOR/ADMIN), password_hash
+- **Case** — CASE-{year}-{seq} case_number, status (OPEN/IN_PROGRESS/CLOSED/ARCHIVED), priority, owner FK
+- **Evidence** — stored_filename (UUID), storage_path, **sha256_hash (server-computed), file_size, mime_type, status, case FK
+- **AnalysisRun** — INV-{year}-{seq} investigation_id, prediction, confidence, {trust/quality scores, heatmap/overlay paths, advanced_xai JSON, evidence FK
+- **AuditLog** — Append-only event log (timestamp, event_type, FK refs to case/evidence/analysis/user, scrubbed details
+- **InvestigationReport** — RPT-{year}-{seq} report_number, **sha256, storage_path, PDF metadata
+
+Schema: [`entities.py`](backend/app/models/entities.py)
+
+---
 
 ## Dataset versioning
 
-Active version pointer: `dataset/versions/CURRENT`  
+Active version pointer: `dataset/versions/CURRENT`
 Sealed metadata: `dataset/versions/v1/dataset_metadata.json`
 
 Future corpora (**FaceForensics++**, **Celeb-DF**) plug in via config / `MAYA_RAW_DATASET_DIR` without changing pipeline architecture.
 
-## Quick start (Phase 1 app shell)
+---
 
-```bash
-python backend/run.py
-```
+## Investigation Workflow
 
-- Home: http://127.0.0.1:5000/
-- Health: http://127.0.0.1:5000/health
+1. **Create Case → **Upload Evidence** → **Verify Integrity → **Analyze** (AI + XAI) → **Generate PDF Report**
+
+Each investigation gets a unique `INV-{ID}` directory under `artifacts/investigations/` containing: prediction JSON, heatmaps, overlays, SHAP visualizations, and advanced XAI outputs. All evidence and reports are SHA-256 sealed and audit-logged.
+
+Guide: [`INVESTIGATION_WORKFLOW.md`](docs/INVESTIGATION_WORKFLOW.md) · [`VIVA_GUIDE.md`](docs/VIVA_GUIDE.md)
+
+---
 
 ## Documentation
 
 Start here: [`docs/00_PHASE0_INDEX.md`](docs/00_PHASE0_INDEX.md)
 
-Phase 3 sprint notes: [`PHASE3_SPRINT1`](docs/PHASE3_SPRINT1.md)–[`SPRINT5`](docs/PHASE3_SPRINT5.md)  
-Phase 4 sprint notes: [`PHASE4_SPRINT1`](docs/PHASE4_SPRINT1.md)–[`SPRINT4`](docs/PHASE4_SPRINT4.md)
+Phase 3 sprint notes: [`PHASE3_SPRINT1`](docs/PHASE3_SPRINT1.md)–[`SPRINT5`](docs/PHASE3_SPRINT5.md)
+Phase 4 sprint notes: [`PHASE4_SPRINT1`](docs/PHASE4_SPRINT1.md)–[`SPRINT5`](docs/PHASE4_SPRINT5.md)
+
+Other: [`API.md`](docs/API.md) · [`SECURITY.md`](docs/SECURITY.md) · [`DATABASE.md`](docs/DATABASE.md) · [`DEPLOYMENT.md`](docs/DEPLOYMENT.md) · [`TESTING.md`](docs/TESTING.md) · [`XAI_ARCHITECTURE.md)](docs/XAI_ARCHITECTURE.md)
+
+---
 
 ## Architecture
 
@@ -260,15 +446,8 @@ Phase 4 sprint notes: [`PHASE4_SPRINT1`](docs/PHASE4_SPRINT1.md)–[`SPRINT4`](d
 
 AI code under `ai/` must not import Flask. Explainability is independent of training/eval/benchmark packages and is requested by higher layers when needed.
 
+---
+
 ## License / use
 
 Intended for academic and authorized investigative training contexts. Not a consumer public scanner.
-#   M A Y A 
- 
- #   M A Y A 
- 
- #   M A Y A 
- 
- #   M A Y A 
- 
- 
