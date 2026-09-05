@@ -10,6 +10,7 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from backend.app.exceptions import InvalidEvidenceError
+from backend.app.utils.paths import is_within
 
 logger = logging.getLogger("maya.backend.storage")
 
@@ -62,9 +63,9 @@ def store_evidence_file(
     dest = case_dir / stored
 
     # Prevent path escape
-    dest = dest.resolve()
-    if not str(dest).startswith(str(Path(upload_root).resolve())):
+    if not is_within(upload_root, dest):
         raise InvalidEvidenceError("Invalid storage path")
+    dest = dest.resolve()
 
     file.save(dest)
     size = dest.stat().st_size

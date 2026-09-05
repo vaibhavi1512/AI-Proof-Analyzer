@@ -6,17 +6,21 @@ from flask import Blueprint, current_app, request, send_from_directory
 from flask_login import current_user
 from pathlib import Path
 
-from backend.app.exceptions import ValidationError
+from backend.app.exceptions import (
+    AuthorizationError,
+    ReportFileMissingError,
+    ReportNotFoundError,
+)
 from backend.app.extensions import db
 from backend.app.models import InvestigationReport
 from backend.app.schemas import analysis_to_dict, api_success
 from backend.app.security import login_required_api
 from backend.app.services import analysis_service
-from backend.app.services.analysis_service import get_analysis
 from backend.app.services.report_service import (
     generate_investigation_report,
     report_to_dict,
 )
+from backend.app.utils.paths import resolve_within
 
 analysis_bp = Blueprint("api_analysis", __name__, url_prefix="/api")
 
@@ -77,7 +81,7 @@ def generate_report(analysis_id: int):
 @analysis_bp.get("/analysis/<int:analysis_id>/reports")
 @login_required_api
 def list_reports(analysis_id: int):
-    get_analysis(current_user, analysis_id)  # ownership check
+    analysis_service.get_analysis(current_user, analysis_id)  # ownership check
     rows = (
         InvestigationReport.query.filter_by(analysis_id=analysis_id)
         .order_by(InvestigationReport.generated_at.desc())
@@ -91,26 +95,41 @@ def list_reports(analysis_id: int):
 def get_report_metadata(report_id: int):
     report = db.session.get(InvestigationReport, report_id)
     if report is None:
-        raise ValidationError("Report not found")
-    get_analysis(current_user, report.analysis_id)  # ownership check
+        raise ReportNotFoundError(f"Report {report_id} not found")
+    analysis_service.get_analysis(current_user, report.analysis_id)  # ownership check
     return api_success(report_to_dict(report))
 
 
 @analysis_bp.get("/reports/<int:report_id>/download")
 @login_required_api
 def download_report(report_id: int):
-    from flask import abort
-
     report = db.session.get(InvestigationReport, report_id)
     if report is None:
-        abort(404)
-    get_analysis(current_user, report.analysis_id)  # ownership check
-    root = Path(current_app.config["ROOT_DIR"])
-    full_path = (root / report.storage_path).resolve()
-    if not str(full_path).startswith(str(root.resolve())):
-        abort(403)
-    if not full_path.is_file():
-        abort(404)
+        raise ReportNotFoundError(f"Report {report_id} not found")
+    analysis_service.get_analysis(current_user, report.analysis_id)  # ownership check
+
+    # Reports may be recorded relative to REPORT_DIR or to ROOT_DIR, but the
+    # served file must always land inside REPORT_DIR — ROOT_DIR is the whole
+    # repository and would otherwise expose .env or the SQLite database.
+    report_root = Path(current_app.config["REPORT_DIR"]).resolve()
+    root = Path(current_app.config["ROOT_DIR"]).resolve()
+    candidates = [
+        resolve_within(report_root, report.storage_path),
+        resolve_within(root, report.storage_path),
+    ]
+    full_path = next(
+        (
+            path
+            for path in candidates
+            if path is not None and path.is_file() and resolve_within(report_root, path)
+        ),
+        None,
+    )
+    if full_path is None:
+        stored = (root / report.storage_path).resolve()
+        if stored.is_file() or (report_root / report.storage_path).resolve().is_file():
+            raise AuthorizationError("Report path failed safety check")
+        raise ReportFileMissingError(f"Report {report_id} file is not available")
     return send_from_directory(
         str(full_path.parent),
         full_path.name,

@@ -51,6 +51,16 @@ class AnalysisNotFoundError(NotFoundError):
     error_code = "analysis_not_found"
 
 
+class ReportNotFoundError(NotFoundError):
+    error_code = "report_not_found"
+
+
+class ReportFileMissingError(NotFoundError):
+    """Report row exists but the stored PDF is gone from disk."""
+
+    error_code = "report_file_missing"
+
+
 class InvalidEvidenceError(ValidationError):
     error_code = "invalid_evidence"
 
@@ -63,3 +73,12 @@ class IntegrityCheckError(MayaProductError):
 class AnalysisProcessingError(MayaProductError):
     status_code = 500
     error_code = "analysis_processing_error"
+
+
+class FaceVerificationNotFoundError(NotFoundError):
+    error_code = "face_verification_not_found"
+
+
+class FaceVerificationProcessingError(MayaProductError):
+    status_code = 500
+    error_code = "face_verification_processing_error"

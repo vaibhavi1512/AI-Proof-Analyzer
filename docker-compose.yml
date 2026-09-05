@@ -8,7 +8,8 @@ services:
       - "5000:5000"
     environment:
       FLASK_ENV: production
-      SECRET_KEY: ${SECRET_KEY:-please-change-this-secret-key}
+      # Required: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set to a random value}
       LOG_LEVEL: INFO
       ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
       MAX_CONTENT_LENGTH: 16777216

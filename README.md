@@ -24,6 +24,7 @@ AI-powered **digital evidence investigation platform** for authenticity assessme
 | Phase 4.5 — Advanced Explainability & Trust Layer | Complete |
 | Phase 3 Product — Auth / Cases / Evidence / APIs | Complete |
 | Phase 5 — Reports / Hardening / Docker / E2E Tests | Complete |
+| Phase 5 — Face reference verification (backend) | Complete |
 
 Roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 

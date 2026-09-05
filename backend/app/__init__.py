@@ -11,9 +11,14 @@ import logging
 from pathlib import Path
 
 from flask import Flask, render_template
+from werkzeug.exceptions import HTTPException
 
 from backend.app.api import register_api_blueprints
-from backend.app.config import get_config
+from backend.app.config import (
+    ProductionConfig,
+    get_config,
+    validate_production_config,
+)
 from backend.app.database import init_database
 from backend.app.extensions import login_manager
 from backend.app.routes import register_blueprints
@@ -24,6 +29,8 @@ def create_app(config_name: str | None = None) -> Flask:
     """Create and configure the MAYA Flask application."""
 
     config_object = get_config(config_name)
+    if issubclass(config_object, ProductionConfig):
+        validate_production_config(config_object)
     frontend_dir: Path = config_object.FRONTEND_DIR
 
     app = Flask(
@@ -46,8 +53,10 @@ def create_app(config_name: str | None = None) -> Flask:
     def load_user(user_id: str):
         from backend.app.models import User
 
+        from backend.app.extensions import db
+
         try:
-            return User.query.get(int(user_id))
+            return db.session.get(User, int(user_id))
         except (TypeError, ValueError):
             return None
 
@@ -76,7 +85,53 @@ def _ensure_runtime_directories(config_object: type) -> None:
         Path(path).mkdir(parents=True, exist_ok=True)
 
 
+# Stable machine-readable codes for HTTP-level failures raised by Werkzeug
+# (routing, request parsing, body size) rather than by the service layer.
+_HTTP_ERROR_CODES: dict[int, str] = {
+    400: "bad_request",
+    401: "authentication_error",
+    405: "method_not_allowed",
+    413: "payload_too_large",
+    415: "unsupported_media_type",
+    422: "unprocessable_entity",
+    429: "rate_limited",
+}
+
+
 def _register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(error: HTTPException):
+        """Keep Werkzeug's status code instead of collapsing it into a 500.
+
+        Without this, the catch-all ``Exception`` handler below swallows every
+        HTTPException, so a wrong method or an oversized upload was reported as
+        ``500 unhandled_error``.
+        """
+        from flask import request
+
+        if not request.path.startswith("/api/"):
+            return error
+
+        from backend.app.schemas import api_error
+
+        status = error.code or 500
+        if status == 413:
+            limit = app.config.get("MAX_CONTENT_LENGTH")
+            message = (
+                f"Uploaded payload exceeds the {limit} byte limit"
+                if limit
+                else "Uploaded payload is too large"
+            )
+        elif status >= 500:
+            message = "Internal server error"
+        else:
+            message = error.description or error.name
+        return api_error(
+            message,
+            status=status,
+            error_code=_HTTP_ERROR_CODES.get(status, "http_error"),
+        )
+
     @app.errorhandler(403)
     def forbidden(error):  # noqa: ANN001, ARG001
         return render_template("errors/403.html"), 403

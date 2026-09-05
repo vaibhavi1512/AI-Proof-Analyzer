@@ -91,6 +91,9 @@ class Case(db.Model):
     analysis_runs: Mapped[list[AnalysisRun]] = relationship(
         "AnalysisRun", back_populates="case", lazy="dynamic"
     )
+    face_verifications: Mapped[list[FaceVerification]] = relationship(
+        "FaceVerification", back_populates="case", lazy="dynamic"
+    )
 
 
 class Evidence(db.Model):
@@ -122,6 +125,9 @@ class Evidence(db.Model):
     uploader: Mapped[User] = relationship("User", back_populates="evidence_uploads")
     analysis_runs: Mapped[list[AnalysisRun]] = relationship(
         "AnalysisRun", back_populates="evidence", lazy="dynamic"
+    )
+    face_verifications: Mapped[list[FaceVerification]] = relationship(
+        "FaceVerification", back_populates="evidence", lazy="dynamic"
     )
 
 
@@ -161,6 +167,53 @@ class AnalysisRun(db.Model):
 
     evidence: Mapped[Evidence] = relationship("Evidence", back_populates="analysis_runs")
     case: Mapped[Case] = relationship("Case", back_populates="analysis_runs")
+    creator: Mapped[User] = relationship("User")
+
+
+class FaceVerification(db.Model):
+    __tablename__ = "face_verifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    case_id: Mapped[int] = mapped_column(Integer, ForeignKey("cases.id"), nullable=False, index=True)
+    evidence_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("evidence.id"), nullable=False, index=True
+    )
+    analysis_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("analysis_runs.id"), nullable=True, index=True
+    )
+    investigation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    verification_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="PROCESSING", index=True
+    )
+    decision: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    no_match_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reference_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reference_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reference_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reference_file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reference_face_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_face_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reference_metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    engine_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    artifact_dir: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    result_json_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_by_user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    evidence: Mapped[Evidence] = relationship("Evidence", back_populates="face_verifications")
+    case: Mapped[Case] = relationship("Case", back_populates="face_verifications")
+    analysis: Mapped[AnalysisRun | None] = relationship("AnalysisRun")
     creator: Mapped[User] = relationship("User")
 
 
@@ -221,6 +274,7 @@ __all__ = [
     "AuditLog",
     "Case",
     "Evidence",
+    "FaceVerification",
     "InvestigationReport",
     "User",
 ]

@@ -25,4 +25,9 @@ opencv-python-headless>=4.8.0
 # --- Deferred until later product/AI phases ---
 # Flask-Login==0.6.3  # installed above
 reportlab>=4.0.0
-# Do NOT also install opencv-python alongside opencv-python-headless.
+# Phase 5 — Face reference verification
+# Detection/embedding uses OpenCV (already installed) by default so MAYA's
+# existing torch/torchvision pins are not rewritten. Optional FaceNet engine:
+#   python -m pip install facenet-pytorch --no-deps
+# then set FACE_VERIFICATION_ENGINE=facenet_pytorch
+# (Do not install facenet-pytorch with deps: 2.6.0 pins torch<2.3 / numpy<2.)

@@ -1,0 +1,306 @@
+{
+  "info": {
+    "_postman_id": "maya-backend-product-2026",
+    "name": "MAYA Backend Product Flow",
+    "description": "Session-cookie API flow for the current Flask backend (not JWT).\n\nUse collection variables. After Login, Postman must keep the `session` cookie.\n\nFinal E2E order: Health → Register → Login → Me → Create Case → List/Get Case → Upload Evidence (form field `file`) → Get Evidence → Verify Integrity → Analyze → Get Analysis → Generate PDF → Download PDF → Audit.\n\nEnvelope: `{ok, data, message?}` on success; `{ok:false, error, message}` on failure.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:5000" },
+    { "key": "username", "value": "postman_investigator" },
+    { "key": "password", "value": "securepass1" },
+    { "key": "email", "value": "postman_investigator@maya.test" },
+    { "key": "case_id", "value": "" },
+    { "key": "evidence_id", "value": "" },
+    { "key": "analysis_id", "value": "" },
+    { "key": "report_id", "value": "" },
+    { "key": "evidence_file", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/health",
+        "description": "Auth: none.\nExpected 200.\nFields: status=ok, service=maya, phase=1."
+      }
+    },
+    {
+      "name": "02 Register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 201) {",
+              "  const j = pm.response.json();",
+              "  pm.test('registered', () => pm.expect(j.ok).to.eql(true));",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\",\n  \"full_name\": \"Postman Investigator\"\n}"
+        },
+        "url": "{{base_url}}/api/auth/register",
+        "description": "Auth: public if ALLOW_PUBLIC_REGISTRATION=true.\nJSON: email, username, password, full_name?\nExpected 201 (409 if username/email already exists).\nFields: data.id, data.email, data.username, data.role (INVESTIGATOR)."
+      }
+    },
+    {
+      "name": "03 Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('login ok', () => pm.response.to.have.status(200));",
+              "pm.test('session cookie', () => pm.expect(pm.cookies.has('session')).to.be.true);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"login\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+        },
+        "url": "{{base_url}}/api/auth/login",
+        "description": "Auth: public.\nJSON: login (username or email) OR email/username, plus password.\nExpected 200 + Set-Cookie `session` (HttpOnly, SameSite=Lax).\nKeep cookies for all later requests.\nFields: data.id, data.username, data.role."
+      }
+    },
+    {
+      "name": "04 Current user",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/api/auth/me",
+        "description": "Auth: session required.\nExpected 200 (401 if not logged in).\nFields: data.id, data.email, data.username, data.role, data.is_active."
+      }
+    },
+    {
+      "name": "05 Create case",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const j = pm.response.json();",
+              "pm.test('created', () => { pm.expect(pm.response.code).to.eql(201); pm.expect(j.ok).to.eql(true); });",
+              "if (j && j.data && j.data.case_id) { pm.collectionVariables.set('case_id', String(j.data.case_id)); }"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Postman investigation case\",\n  \"description\": \"Created from Postman E2E flow\",\n  \"priority\": \"HIGH\"\n}"
+        },
+        "url": "{{base_url}}/api/cases",
+        "description": "Auth: session required.\nJSON: title (required), description?, priority? LOW|MEDIUM|HIGH.\nExpected 201.\nFields: data.case_id, data.case_number (CASE-YYYY-######), data.status=OPEN, data.priority."
+      }
+    },
+    {
+      "name": "06 List cases",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/api/cases",
+        "description": "Auth: session required.\nExpected 200 array in data. INVESTIGATOR sees own cases; ADMIN sees all."
+      }
+    },
+    {
+      "name": "07 Get case",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/api/cases/{{case_id}}",
+        "description": "Auth: session + ownership.\nExpected 200 (403/404 otherwise).\nFields: data.case_id, data.case_number, data.title, data.status."
+      }
+    },
+    {
+      "name": "08 Upload image evidence",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const j = pm.response.json();",
+              "pm.test('uploaded', () => pm.expect(pm.response.code).to.eql(201));",
+              "if (j && j.data && j.data.evidence_id) { pm.collectionVariables.set('evidence_id', String(j.data.evidence_id)); }",
+              "if (j && j.data) { pm.test('sha256', () => pm.expect(j.data.sha256).to.have.length(64)); }"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "description": "Required multipart field name is `file`. PNG/JPEG/BMP/WEBP, max 16MB. Select a small RGB image in Postman. Optional: set collection variable evidence_file to a local path.",
+              "type": "file",
+              "src": []
+            },
+            {
+              "key": "notes",
+              "value": "Postman evidence upload",
+              "type": "text"
+            }
+          ]
+        },
+        "url": "{{base_url}}/api/evidence/cases/{{case_id}}",
+        "description": "Auth: session + case ownership.\nContent-Type: multipart/form-data.\nField `file` (required): image .png/.jpg/.jpeg/.bmp/.webp.\nField `notes` (optional).\nExpected 201.\nFields: data.evidence_id, data.sha256 (server SHA-256, 64 hex), data.stored_filename (UUID), data.mime_type, data.file_size, data.status=UPLOADED.\nClient-supplied hashes are ignored."
+      }
+    },
+    {
+      "name": "09 Get evidence",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/api/evidence/{{evidence_id}}",
+        "description": "Auth: session + ownership.\nExpected 200.\nFields: data.evidence_id, data.sha256, data.storage_path, data.analysis_status."
+      }
+    },
+    {
+      "name": "10 Verify evidence integrity",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{}" },
+        "url": "{{base_url}}/api/evidence/{{evidence_id}}/verify-integrity",
+        "description": "Auth: session + ownership.\nNo required body.\nExpected 200.\nFields: data.stored_sha256, data.current_sha256, data.integrity_status (VALID|MODIFIED|MISSING|ERROR)."
+      }
+    },
+    {
+      "name": "11 Analyze evidence",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const j = pm.response.json();",
+              "pm.test('analyzed', () => pm.expect(pm.response.code).to.eql(201));",
+              "if (j && j.data && j.data.analysis_id) { pm.collectionVariables.set('analysis_id', String(j.data.analysis_id)); }"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"generate_explanation\": true,\n  \"explainer\": \"gradcam\",\n  \"verify_before_analyze\": true\n}"
+        },
+        "url": "{{base_url}}/api/evidence/{{evidence_id}}/analyze",
+        "description": "Auth: session + ownership.\nJSON optional: generate_explanation (default true), explainer (default gradcam), verify_before_analyze (default true), explainers[], advanced_xai {shap,faithfulness,counterfactual,fusion,trust,multi_explainer}.\nExpected 201. This call runs real EfficientNet-B0 inference; Grad-CAM adds several seconds on CPU.\nDo not enable advanced_xai SHAP/fusion in Postman unless you can wait (CPU-heavy).\nFields: data.analysis_id, data.investigation_id (INV-…), data.prediction REAL|FAKE, data.confidence, data.analysis_status, data.artifact_dir, data.explanation.{heatmap,overlay,explanation_json}."
+      }
+    },
+    {
+      "name": "12 Get analysis",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/api/analysis/{{analysis_id}}",
+        "description": "Auth: session + ownership.\nExpected 200.\nAlias also exists: GET /api/investigations/{{analysis_id}}.\nFields: same AnalysisRun object as analyze response."
+      }
+    },
+    {
+      "name": "13 Generate PDF report",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const j = pm.response.json();",
+              "pm.test('report created', () => pm.expect(pm.response.code).to.eql(201));",
+              "if (j && j.data && j.data.report_id) { pm.collectionVariables.set('report_id', String(j.data.report_id)); }"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"investigator_notes\": \"Postman E2E notes\",\n  \"format\": \"pdf\"\n}"
+        },
+        "url": "{{base_url}}/api/analysis/{{analysis_id}}/report",
+        "description": "Auth: session + analysis ownership. Analysis must be COMPLETED.\nJSON: investigator_notes?, format? (pdf).\nExpected 201.\nFields: data.report_id, data.report_number (RPT-YYYY-######), data.sha256, data.storage_path, data.investigation_id, data.size_bytes."
+      }
+    },
+    {
+      "name": "14 Download PDF report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/api/reports/{{report_id}}/download",
+        "description": "Auth: session + ownership.\nExpected 200 application/pdf attachment.\nRelated: GET /api/reports/{{report_id}} (metadata JSON), GET /api/analysis/{{analysis_id}}/reports (list)."
+      }
+    },
+    {
+      "name": "15 Audit log",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/api/audit",
+        "description": "Auth: session required. ADMIN sees all; INVESTIGATOR sees own events only. Limit 200.\nExpected 200 array.\nFields per row: audit_id, user_id, case_id, evidence_id, analysis_id, event_type, timestamp, details.\nTypical types in this flow: USER_REGISTERED, USER_LOGIN, CASE_CREATED, EVIDENCE_UPLOADED, EVIDENCE_VERIFIED, ANALYSIS_STARTED, XAI_GENERATED, ANALYSIS_COMPLETED, REPORT_GENERATED."
+      }
+    },
+    {
+      "name": "Optional — Patch case",
+      "request": {
+        "method": "PATCH",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"description\": \"Updated from Postman\",\n  \"priority\": \"MEDIUM\"\n}"
+        },
+        "url": "{{base_url}}/api/cases/{{case_id}}",
+        "description": "Auth: owner or admin. JSON: title?, description?, status?, priority?. Cannot modify ARCHIVED cases. Expected 200."
+      }
+    },
+    {
+      "name": "Optional — Close case",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{base_url}}/api/cases/{{case_id}}/close",
+        "description": "Auth: owner or admin. Sets status=CLOSED. Run after the PDF download if you still need an OPEN case for other requests. Expected 200."
+      }
+    },
+    {
+      "name": "Optional — Logout",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{base_url}}/api/auth/logout",
+        "description": "Auth: session required. Expected 200 {ok:true, message: Logged out}. Subsequent /me is 401."
+      }
+    }
+  ]
+}

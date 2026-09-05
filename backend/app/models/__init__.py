@@ -5,6 +5,7 @@ from backend.app.models.entities import (
     AuditLog,
     Case,
     Evidence,
+    FaceVerification,
     InvestigationReport,
     User,
 )
@@ -14,6 +15,8 @@ from backend.app.models.enums import (
     CasePriority,
     CaseStatus,
     EvidenceStatus,
+    FaceVerificationDecision,
+    FaceVerificationStatus,
     IntegrityStatus,
     UserRole,
 )
@@ -28,6 +31,9 @@ __all__ = [
     "CaseStatus",
     "Evidence",
     "EvidenceStatus",
+    "FaceVerification",
+    "FaceVerificationDecision",
+    "FaceVerificationStatus",
     "IntegrityStatus",
     "InvestigationReport",
     "User",

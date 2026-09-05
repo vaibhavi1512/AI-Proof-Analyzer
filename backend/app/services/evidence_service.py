@@ -25,6 +25,7 @@ from backend.app.models.enums import (
 )
 from backend.app.services.case_service import require_case_access
 from backend.app.storage import store_evidence_file
+from backend.app.utils.paths import resolve_within
 
 logger = logging.getLogger("maya.backend.evidence")
 
@@ -100,8 +101,8 @@ def list_case_evidence(user: User, case_id: int) -> list[Evidence]:
 
 def absolute_evidence_path(evidence: Evidence) -> Path:
     root = Path(current_app.config["UPLOAD_DIR"])
-    path = (root / evidence.storage_path).resolve()
-    if not str(path).startswith(str(root.resolve())):
+    path = resolve_within(root, evidence.storage_path)
+    if path is None:
         raise IntegrityCheckError("Evidence path failed safety check")
     return path
 

@@ -39,6 +39,18 @@ class AnalysisStatus(str, enum.Enum):
     FAILED = "FAILED"
 
 
+class FaceVerificationStatus(str, enum.Enum):
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class FaceVerificationDecision(str, enum.Enum):
+    MATCH = "MATCH"
+    NO_MATCH = "NO_MATCH"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
 class IntegrityStatus(str, enum.Enum):
     VALID = "VALID"
     TAMPERED = "TAMPERED"
@@ -61,4 +73,8 @@ class AuditEventType(str, enum.Enum):
     ANALYSIS_COMPLETED = "ANALYSIS_COMPLETED"
     ANALYSIS_FAILED = "ANALYSIS_FAILED"
     XAI_GENERATED = "XAI_GENERATED"
+    XAI_FAILED = "XAI_FAILED"
     REPORT_GENERATED = "REPORT_GENERATED"
+    FACE_VERIFICATION_STARTED = "FACE_VERIFICATION_STARTED"
+    FACE_VERIFICATION_COMPLETED = "FACE_VERIFICATION_COMPLETED"
+    FACE_VERIFICATION_FAILED = "FACE_VERIFICATION_FAILED"

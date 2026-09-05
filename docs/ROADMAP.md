@@ -21,6 +21,6 @@
 | 4.4 | Explainability Validation & Benchmark Suite | Complete |
 | **4.5** | **Advanced Explainability & Trust Layer** | **Complete** |
 | **3 Product** | **Auth / Cases / Evidence / REST APIs / AI bridge** | **Complete** |
-| 5 | Further product / reports / hardening | Pending |
+| **5** | **Face reference verification** | **Complete** |
 
 > Product Phase 3 uses **Flask-Login** sessions (SRS). JWT is deferred. See [`docs/PHASE3_PRODUCT.md`](PHASE3_PRODUCT.md).

@@ -50,6 +50,28 @@ class BaseConfig:
         "ALLOW_PUBLIC_REGISTRATION", "true"
     ).lower() in {"1", "true", "yes", "on"}
 
+    # Phase 5 — Face reference verification (no hard-coded model filesystem paths)
+    FACE_VERIFICATION_ENGINE: str = os.getenv("FACE_VERIFICATION_ENGINE", "opencv")
+    FACE_VERIFICATION_MODEL: str = os.getenv("FACE_VERIFICATION_MODEL", "inception_resnet_v1")
+    FACE_VERIFICATION_MODEL_VERSION: str = os.getenv(
+        "FACE_VERIFICATION_MODEL_VERSION", "vggface2"
+    )
+    FACE_VERIFICATION_PRETRAINED: str = os.getenv("FACE_VERIFICATION_PRETRAINED", "vggface2")
+    FACE_VERIFICATION_DEVICE: str = os.getenv("FACE_VERIFICATION_DEVICE", "cpu")
+    FACE_VERIFICATION_MATCH_THRESHOLD: float = float(
+        os.getenv("FACE_VERIFICATION_MATCH_THRESHOLD", "0.70")
+    )
+    FACE_VERIFICATION_NO_MATCH_THRESHOLD: float = float(
+        os.getenv("FACE_VERIFICATION_NO_MATCH_THRESHOLD", "0.50")
+    )
+    FACE_VERIFICATION_MIN_FACE_SIZE: int = int(
+        os.getenv("FACE_VERIFICATION_MIN_FACE_SIZE", "40")
+    )
+    FACE_VERIFICATION_MIN_SHARPNESS: float = float(
+        os.getenv("FACE_VERIFICATION_MIN_SHARPNESS", "25.0")
+    )
+    FACE_VERIFICATION_CACHE_DIR: str | None = os.getenv("FACE_VERIFICATION_CACHE_DIR") or None
+
 
 class DevelopmentConfig(BaseConfig):
     """Local development settings."""
@@ -68,9 +90,46 @@ class TestingConfig(BaseConfig):
 
 
 class ProductionConfig(BaseConfig):
-    """Production defaults (DEBUG off)."""
+    """Production defaults (DEBUG off, cookies locked down)."""
 
     DEBUG: bool = False
+    # Cookies must not travel over plaintext HTTP in production. Deployments
+    # that terminate TLS elsewhere can opt out with SESSION_COOKIE_SECURE=false.
+    SESSION_COOKIE_SECURE: bool = os.getenv(
+        "SESSION_COOKIE_SECURE", "true"
+    ).lower() in {"1", "true", "yes", "on"}
+    REMEMBER_COOKIE_SECURE: bool = SESSION_COOKIE_SECURE
+
+
+# Placeholder values that must never protect a production session cookie.
+INSECURE_SECRET_KEYS = {
+    "dev-only-change-me",
+    "change-me-via-env",
+    "please-change-this-secret-key",
+    "changeme",
+    "secret",
+}
+
+
+class InsecureConfigurationError(RuntimeError):
+    """Raised when production is asked to boot with development defaults."""
+
+
+def validate_production_config(config: type[BaseConfig]) -> None:
+    """Refuse to start production with a placeholder or missing SECRET_KEY.
+
+    A development default that silently carries into production is worse than
+    a failed boot: it makes every session cookie forgeable.
+    """
+
+    secret = str(getattr(config, "SECRET_KEY", "") or "")
+    if secret.strip().lower() in INSECURE_SECRET_KEYS or len(secret) < 16:
+        raise InsecureConfigurationError(
+            "SECRET_KEY is unset, too short, or still a placeholder. Set a "
+            "random value of at least 16 characters (e.g. "
+            "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`) "
+            "before starting MAYA in production."
+        )
 
 
 CONFIG_MAP: dict[str, type[BaseConfig]] = {

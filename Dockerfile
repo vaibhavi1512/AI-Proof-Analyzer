@@ -28,10 +28,11 @@ COPY . .
 
 RUN mkdir -p /app/backend/instance /app/uploads /app/reports /app/logs /app/artifacts/investigations /app/artifacts/checkpoints
 
+# SECRET_KEY is deliberately NOT defaulted here: production boot fails fast if
+# it is unset or a placeholder (see backend/app/config validate_production_config).
 ENV FLASK_ENV=production \
     PYTHONPATH=/app \
     ROOT_DIR=/app \
-    SECRET_KEY=change-me-via-env \
     DATABASE_URL=sqlite:////app/backend/instance/maya.db \
     LOG_LEVEL=INFO \
     ALLOW_PUBLIC_REGISTRATION=false

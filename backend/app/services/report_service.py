@@ -36,6 +36,7 @@ from backend.app.models.entities import (
     AuditLog,
     Case,
     Evidence,
+    FaceVerification,
     InvestigationReport,
     User,
 )
@@ -44,6 +45,8 @@ from backend.app.services.analysis_service import get_analysis
 from backend.app.services.evidence_service import get_evidence
 
 logger = logging.getLogger("maya.backend.reports")
+
+SUPPORTED_REPORT_FORMATS = {"pdf"}
 
 _DISCLAIMER = (
     "This MAYA Media Authenticity Analyzer report is generated for investigative "
@@ -142,6 +145,55 @@ def _section_title(text: str, styles) -> Paragraph:
     )
 
 
+def _append_face_verification_section(
+    story: list[Any],
+    styles,
+    rows: list[FaceVerification],
+) -> None:
+    if not rows:
+        return
+    story.append(_section_title("Face Reference Verification", styles))
+    latest = rows[0]
+    fv_rows = [
+        ("Reference face verification performed", "Yes"),
+        ("Verification ID", str(latest.id)),
+        ("Status", str(latest.verification_status or "")),
+        ("Decision", str(latest.decision or "N/A")),
+        ("Similarity score", _fmt_score(latest.similarity_score)),
+        ("Distance score", _fmt_score(latest.distance_score)),
+        ("Match threshold", _fmt_score(latest.threshold)),
+        ("No-match threshold", _fmt_score(latest.no_match_threshold)),
+        ("Model", str(latest.model_name or "")),
+        ("Model version", str(latest.model_version or "")),
+        ("Engine", str(latest.engine_name or "")),
+        ("Reason code", str(latest.reason_code or "")),
+        ("Artifact directory", str(latest.artifact_dir or "")),
+        ("Result JSON", str(latest.result_json_path or "")),
+    ]
+    story.append(_kv_table([(k, Paragraph(v, styles["Normal"])) for k, v in fv_rows]))
+
+    from flask import current_app
+
+    root = Path(current_app.config["ROOT_DIR"])
+    if latest.artifact_dir:
+        ref_img = _safe_image(str(root / latest.artifact_dir / "reference_face.png"), max_w=7 * cm, max_h=7 * cm)
+        evd_img = _safe_image(str(root / latest.artifact_dir / "evidence_face.png"), max_w=7 * cm, max_h=7 * cm)
+        if ref_img or evd_img:
+            story.append(Spacer(1, 3 * mm))
+            if ref_img:
+                story.append(Paragraph("<i>Reference face crop</i>", styles["Normal"]))
+                story.append(ref_img)
+            if evd_img:
+                story.append(Paragraph("<i>Evidence face crop</i>", styles["Normal"]))
+                story.append(evd_img)
+
+
+def _fmt_score(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{float(value):.4f}"
+
+
 def _build_pdf(
     output_path: Path,
     *,
@@ -152,6 +204,7 @@ def _build_pdf(
     audit_events: list[AuditLog],
     generator: User,
     notes: str | None = None,
+    face_verifications: list[FaceVerification] | None = None,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -239,6 +292,8 @@ def _build_pdf(
     if run.completed_at:
         pred_rows.append(("Completed At", run.completed_at.isoformat(timespec="seconds")))
     story.append(_kv_table([(k, Paragraph(v, styles["Normal"])) for k, v in pred_rows]))
+
+    _append_face_verification_section(story, styles, face_verifications or [])
 
     # Evidence metadata
     story.append(_section_title("Evidence Integrity & Metadata", styles))
@@ -395,6 +450,14 @@ def generate_investigation_report(
     if run.status != "COMPLETED":
         raise ValidationError("Reports can only be generated for completed analyses")
 
+    # report_format is client-supplied and is interpolated into the output
+    # filename, so it must be an allowlisted token and never a path fragment.
+    report_format = str(report_format or "pdf").strip().lower()
+    if report_format not in SUPPORTED_REPORT_FORMATS:
+        raise ValidationError(
+            f"Unsupported report format. Allowed: {sorted(SUPPORTED_REPORT_FORMATS)}"
+        )
+
     evidence = get_evidence(user, run.evidence_id)
     case = evidence.case
 
@@ -414,6 +477,15 @@ def generate_investigation_report(
     ).order_by(AuditLog.timestamp.asc())
     audit_events = audit_q.all()
 
+    face_rows = (
+        FaceVerification.query.filter(
+            (FaceVerification.investigation_id == str(run.investigation_id or ""))
+            | (FaceVerification.evidence_id == evidence.id)
+        )
+        .order_by(FaceVerification.id.desc())
+        .all()
+    )
+
     try:
         _build_pdf(
             output_path,
@@ -424,6 +496,7 @@ def generate_investigation_report(
             audit_events=audit_events,
             generator=user,
             notes=investigator_notes,
+            face_verifications=face_rows,
         )
     except Exception as exc:
         logger.exception("PDF generation failed for analysis=%s", analysis_id)
@@ -434,7 +507,12 @@ def generate_investigation_report(
 
     size = output_path.stat().st_size
     digest = hash_file(output_path, algorithm="sha256")
-    rel = output_path.relative_to(upload_root).as_posix()
+    resolved = output_path.resolve()
+    root_resolved = upload_root.resolve()
+    try:
+        rel = resolved.relative_to(root_resolved).as_posix()
+    except ValueError:
+        rel = resolved.relative_to(report_root.resolve()).as_posix()
 
     report = InvestigationReport(
         report_number=rpt_num,

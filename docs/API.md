@@ -182,6 +182,10 @@ Evidence object:
 - If `advanced_xai` is omitted or `null` → basic inference + basic explainer.
 - `explainers` list can be `["gradcam"]` → single explainer; > 1 → multi-explainer.
 - `advanced_xai` with expensive methods (SHAP, fusion, counterfactual, faithfulness, trust) run ONLY if opted-in.
+- Explainability is best-effort: if the basic explainer or advanced XAI fails, the
+  analysis still completes with the authenticity verdict, the XAI fields are left
+  empty, and an `XAI_FAILED` audit event is recorded. Only an inference failure
+  marks the run `FAILED` (`500 analysis_processing_error`).
 - **201:** AnalysisRun object (below); status=COMPLETED or error=FAILED with error_message.
 
 ### `GET /api/analysis/{analysis_id}`
@@ -200,6 +204,7 @@ Analysis / Report Generation
 - **Auth:** Required (analysis owner)
 - **Body:** `{investigator_notes?:string, format?:"pdf"}`
 - Generates PDF forensic report PDF.
+- `format` is allowlisted (`pdf` only); any other value returns `400 validation_error`.
 - **201:** Report object.
 
 ### `GET /api/analysis/{analysis_id}/reports`
@@ -211,11 +216,14 @@ Analysis / Report Generation
 
 - **Auth:** Required (ownership)
 - Report metadata.
+- **404 `report_not_found`** when the report does not exist.
 
 ### `GET /api/reports/{report_id}/download`
 
 - **Auth:** Required (ownership)
-- Binary download of PDF (path traversal safe).
+- Binary download of PDF. The served file must resolve inside `REPORT_DIR`;
+  anything else returns `403 authorization_error`, and a missing file returns
+  `404 report_file_missing`.
 
 AnalysisRun object:
 
@@ -268,17 +276,66 @@ Audit event types:
 `CASE_CREATED`, `CASE_UPDATED`, `CASE_CLOSED`,
 `EVIDENCE_UPLOADED`, `EVIDENCE_ACCESSED`, `EVIDENCE_VERIFIED`,
 `ANALYSIS_STARTED`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`,
-`XAI_GENERATED`, `REPORT_GENERATED`
+`XAI_GENERATED`, `XAI_FAILED`, `REPORT_GENERATED`,
+`FACE_VERIFICATION_STARTED`, `FACE_VERIFICATION_COMPLETED`, `FACE_VERIFICATION_FAILED`
 
-## 7. Error codes
+## 7. Face reference verification
+
+### `POST /api/evidence/{evidence_id}/face-verification`
+
+- **Auth:** Required (evidence/case ownership)
+- **Body:** multipart `file` = reference image; optional form `threshold`, `no_match_threshold`, `investigation_id`
+- **201:** Face verification object
+- Decisions: `MATCH` | `NO_MATCH` | `INCONCLUSIVE`
+- Rejects disallowed types/sizes using the evidence upload allowlist
+
+### `GET /api/face-verifications/{verification_id}`
+
+- **Auth:** Required (ownership)
+- **200:** Face verification object
+
+```json
+{
+  "verification_id": 1,
+  "case_id": 1,
+  "evidence_id": 1,
+  "investigation_id": "INV-2026-000001",
+  "verification_status": "COMPLETED",
+  "decision": "MATCH",
+  "similarity_score": 0.91,
+  "distance_score": 0.42,
+  "threshold": 0.70,
+  "no_match_threshold": 0.50,
+  "reason_code": "OK",
+  "model_name": "inception_resnet_v1",
+  "model_version": "vggface2",
+  "reference_face_count": 1,
+  "evidence_face_count": 1,
+  "artifact_dir": "artifacts/investigations/INV-2026-000001/face_verification/…"
+}
+```
+
+See [`PHASE5_FACE_VERIFICATION.md`](PHASE5_FACE_VERIFICATION.md).
+
+## 8. Error codes
 
 | HTTP | error_code | Meaning |
 |------|--------------|---------|
+| 400 | bad_request | Malformed HTTP request |
 | 400 | validation_error | Body/args invalid |
 | 400 | invalid_evidence | Bad upload |
 | 401 | authentication_error | Login required / bad credentials |
-| 403 | authorization_error | Forbidden (ownership / role) |
-| 404 | not_found / case_not_found / evidence_not_found / analysis_not_found | Missing resource |
+| 403 | authorization_error | Forbidden (ownership / role / path safety) |
+| 404 | not_found / case_not_found / evidence_not_found / analysis_not_found / face_verification_not_found | Missing resource |
+| 404 | report_not_found | Report row does not exist |
+| 404 | report_file_missing | Report row exists but the stored file is gone |
+| 405 | method_not_allowed | Wrong HTTP method for the route |
 | 409 | conflict | Duplicate |
+| 413 | payload_too_large | Upload exceeds `MAX_CONTENT_LENGTH` |
+| 415 | unsupported_media_type | Unsupported request content type |
 | 500 | analysis_processing_error | AI/XAI processing error |
+| 500 | face_verification_processing_error | Face verification processing error |
 | 500 | unhandled_error | Server error (safe message) |
+
+All HTTP-level failures raised by the routing/parsing layer (405, 413, …) use the
+same `{"ok": false, "error": ..., "message": ...}` envelope as service errors.

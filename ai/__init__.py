@@ -10,4 +10,5 @@ Phase 4.1: ``ai/explainability/``
 Phase 4.2: Multi-Explainer Framework (``explainers/``, ``comparison``)
 Phase 4.3: Explanation Analytics & Trust Engine (``analytics/``)
 Phase 4.4: Explainability Validation & Benchmark Suite (``explainability/benchmark/``)
+Phase 5: Face reference verification (``ai/face_verification/``)
 """

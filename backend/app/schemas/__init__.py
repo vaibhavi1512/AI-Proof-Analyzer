@@ -7,7 +7,7 @@ from typing import Any
 from flask import jsonify
 from werkzeug.wrappers import Response
 
-from backend.app.models.entities import AnalysisRun, Case, Evidence, User
+from backend.app.models.entities import AnalysisRun, Case, Evidence, FaceVerification, User
 
 
 def api_success(data: Any = None, *, status: int = 200, message: str | None = None) -> Response:
@@ -112,4 +112,31 @@ def analysis_to_dict(run: AnalysisRun) -> dict[str, Any]:
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "explanation": explanation,
+    }
+
+
+def face_verification_to_dict(row: FaceVerification) -> dict[str, Any]:
+    return {
+        "verification_id": row.id,
+        "case_id": row.case_id,
+        "evidence_id": row.evidence_id,
+        "analysis_id": row.analysis_id,
+        "investigation_id": row.investigation_id,
+        "verification_status": row.verification_status,
+        "decision": row.decision,
+        "similarity_score": row.similarity_score,
+        "distance_score": row.distance_score,
+        "threshold": row.threshold,
+        "no_match_threshold": row.no_match_threshold,
+        "reason_code": row.reason_code,
+        "model_name": row.model_name,
+        "model_version": row.model_version,
+        "engine_name": row.engine_name,
+        "reference_face_count": row.reference_face_count,
+        "evidence_face_count": row.evidence_face_count,
+        "reference_filename": row.reference_filename,
+        "artifact_dir": row.artifact_dir,
+        "error_message": row.error_message,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
     }
