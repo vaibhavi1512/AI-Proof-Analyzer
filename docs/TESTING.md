@@ -10,6 +10,7 @@
 | Analysis (mocked) | `tests/test_analysis_api.py` | Product flow with mocked inference/XAI; failure persistence | No (patched) |
 | **Face verification** | `tests/test_face_verification.py` | MATCH/NO_MATCH/INCONCLUSIVE, authz, artifacts, audit, report integration (engine mocked) | No (patched) |
 | **Backend hardening** | `tests/test_backend_hardening.py` | Phase 8 regressions: 405/413/404 envelopes, report download traversal + `format` allowlist, path containment, non-fatal XAI, terminal FAILED state, production `SECRET_KEY`/cookies | No (patched) |
+| **Frontend integration API** | `tests/test_frontend_integration_api.py` | EVIDEX support routes: auth required on all, ownership scoping of dashboard/custody/analyses/file/artifact, artifact kind allowlist, refusal of artifact paths outside `artifacts/`, `/evidex/` asset allowlist | No (patched) |
 | **E2E Product** | `tests/test_e2e_product.py` | **Register → Login → Case → Upload → Real EfficientNet inference → Audit → Integrity → Artifacts → Cross-user authZ → Tamper detection** | **YES** |
 | Audit (XAI internal) | `tests/test_audit.py` | Phase 4.5 `build_audit_record` / `XaiAuditRecord` serialization | No |
 | AI unit suite | `tests/test_inference.py`, `test_model.py`, `test_training.py`, `test_evaluation.py`, `test_dataset.py` | Training/inference correctness | Optional |
@@ -23,7 +24,8 @@
 python -m pytest tests/test_auth_api.py tests/test_cases_api.py `
   tests/test_evidence_api.py tests/test_audit.py `
   tests/test_analysis_api.py tests/test_face_verification.py `
-  tests/test_backend_hardening.py -q
+  tests/test_backend_hardening.py `
+  tests/test_frontend_integration_api.py -q
 ```
 
 ### Real AI + full E2E backend

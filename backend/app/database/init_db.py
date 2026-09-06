@@ -27,10 +27,39 @@ def init_database(app: Flask) -> None:
 
         db.create_all()
         _ensure_sqlite_columns()
+        _ensure_default_admin()
         logger.info(
             "Database initialized (%s)",
             app.config.get("SQLALCHEMY_DATABASE_URI"),
         )
+
+
+def _ensure_default_admin() -> None:
+    """Idempotently create the default MAYA admin account if missing.
+
+    Creates username ``admin`` with a hashed password only when no row with
+    that username exists. Never overwrites an existing admin or password.
+    """
+
+    from backend.app.models.entities import User
+    from backend.app.models.enums import UserRole
+    from backend.app.security import hash_password
+
+    existing = User.query.filter_by(username="admin").first()
+    if existing is not None:
+        return
+
+    user = User(
+        email="admin@maya.local",
+        username="admin",
+        password_hash=hash_password("admin@123"),
+        full_name="System Administrator",
+        role=UserRole.ADMIN.value,
+        is_active=True,
+    )
+    db.session.add(user)
+    db.session.commit()
+    logger.info("Default admin account ensured (username=admin)")
 
 
 def _sqlite_ddl_type(column) -> str:

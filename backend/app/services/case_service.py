@@ -8,7 +8,14 @@ from datetime import datetime, timezone
 from backend.app.audit import record_audit
 from backend.app.exceptions import AuthorizationError, CaseNotFoundError, ValidationError
 from backend.app.extensions import db
-from backend.app.models.entities import Case, User
+from backend.app.models.entities import (
+    AnalysisRun,
+    Case,
+    Evidence,
+    FaceVerification,
+    InvestigationReport,
+    User,
+)
 from backend.app.models.enums import AuditEventType, CasePriority, CaseStatus
 
 logger = logging.getLogger("maya.backend.cases")
@@ -134,6 +141,58 @@ def update_case(
     )
     db.session.commit()
     return case
+
+
+def delete_case(user: User, case_id: int) -> dict[str, int | str]:
+    """Delete a case and its dependent records (owner or admin only).
+
+    Audit rows are deliberately preserved: the custody trail must survive the
+    record it describes. Stored evidence files on disk are left untouched so a
+    UI action can never destroy the original bytes.
+    """
+
+    case = require_case_access(user, case_id)
+    case_number = case.case_number
+
+    # Delete children explicitly: only Case.evidence_items declares a cascade,
+    # so reports / analyses / face verifications would otherwise be orphaned.
+    report_count = InvestigationReport.query.filter_by(case_id=case.id).delete(
+        synchronize_session=False
+    )
+    face_count = FaceVerification.query.filter_by(case_id=case.id).delete(
+        synchronize_session=False
+    )
+    analysis_count = AnalysisRun.query.filter_by(case_id=case.id).delete(
+        synchronize_session=False
+    )
+    evidence_count = Evidence.query.filter_by(case_id=case.id).delete(
+        synchronize_session=False
+    )
+
+    db.session.delete(case)
+    # case_id is intentionally omitted: the row it referenced no longer exists.
+    record_audit(
+        AuditEventType.CASE_DELETED,
+        user_id=user.id,
+        details={
+            "case_id": case_id,
+            "case_number": case_number,
+            "deleted_evidence": int(evidence_count),
+            "deleted_analyses": int(analysis_count),
+            "deleted_face_verifications": int(face_count),
+            "deleted_reports": int(report_count),
+        },
+    )
+    db.session.commit()
+    logger.info("Case %s deleted by user %s", case_number, user.id)
+    return {
+        "case_id": case_id,
+        "case_number": case_number,
+        "deleted_evidence": int(evidence_count),
+        "deleted_analyses": int(analysis_count),
+        "deleted_face_verifications": int(face_count),
+        "deleted_reports": int(report_count),
+    }
 
 
 def close_case(user: User, case_id: int) -> Case:

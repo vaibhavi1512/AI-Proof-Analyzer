@@ -60,9 +60,34 @@ copy .env.example .env
 python backend/run.py
 ```
 
-- Home: http://127.0.0.1:5000/
+- Home (health shell): http://127.0.0.1:5000/
 - Health: http://127.0.0.1:5000/health
+- **EVIDEX investigator UI: http://127.0.0.1:5000/evidex/**
 - API prefix: `/api/*` (JSON, Flask-Login session cookies)
+
+### Frontends
+
+Two separate frontends live in this repository:
+
+| Directory | Purpose | Served at |
+|---|---|---|
+| `DIGITALEVIDENCE_FIXED/` | **EVIDEX** — the investigator/forensic UI, integrated with the MAYA API | `/evidex/` |
+| `frontend/` | Minimal Jinja health/test shell from Phase 1 | `/` and `/static` |
+
+EVIDEX is plain HTML/CSS/JS with no build step — there is nothing to `npm
+install`. It is served from the Flask origin so the Flask-Login session cookie
+stays first-party and no CORS configuration is needed. Just start the backend
+and open `/evidex/`.
+
+To serve it from a different origin instead, set `window.EVIDEX_API_BASE`
+before `script.js` loads and add the matching CORS configuration; the API base
+URL is centralised in `DIGITALEVIDENCE_FIXED/api.js` and is not hardcoded
+anywhere else.
+
+The investigator pages (dashboard, cases, upload, analysis, XAI, heat map,
+chain of custody, evidence readiness, reports, profile) run against the real
+backend. The admin console and the public verification preview are still backed
+by seeded browser-local demo data and are labelled as such in the UI.
 
 ---
 

@@ -59,3 +59,10 @@ def patch_case(case_id: int):
 def close_case(case_id: int):
     case = case_service.close_case(current_user, case_id)
     return api_success(case_to_dict(case), message="Case closed")
+
+
+@cases_bp.delete("/<int:case_id>")
+@login_required_api
+def delete_case(case_id: int):
+    result = case_service.delete_case(current_user, case_id)
+    return api_success(result, message="Case deleted")

@@ -80,6 +80,17 @@ User object shape:
 - **Auth:** Required (owner or admin)
 - Sets status=CLOSED + closed_at timestamp.
 
+### `DELETE /api/cases/{case_id}`
+
+- **Auth:** Required (owner or admin)
+- Deletes the case together with its evidence, analysis runs, face verifications
+  and investigation reports.
+- Audit rows are **retained** (the custody trail outlives the record), and stored
+  evidence files on disk are **not** removed.
+- **200:** `{case_id, case_number, deleted_evidence, deleted_analyses, deleted_face_verifications, deleted_reports}`
+- **403:** `authorization_error` when the caller neither owns the case nor is an admin
+- **404:** `not_found` for an unknown or already-deleted case
+
 Case object:
 
 ```json
@@ -317,7 +328,66 @@ Audit event types:
 
 See [`PHASE5_FACE_VERIFICATION.md`](PHASE5_FACE_VERIFICATION.md).
 
-## 8. Error codes
+## 8. Frontend support endpoints
+
+Thin read-only routes added so the EVIDEX UI can render data that already
+existed but had no HTTP surface. They add no business logic and reuse the same
+ownership checks as the endpoints above.
+
+### `GET /api/evidence/{evidence_id}/file`
+
+- **Auth:** Required (evidence/case ownership)
+- **200:** The stored evidence image inline (`Content-Type` = the recorded MIME type)
+- Path resolved through `absolute_evidence_path`, so it cannot escape `UPLOAD_DIR`
+- **404:** `not_found` when the stored file is missing
+
+### `GET /api/evidence/{evidence_id}/analyses`
+
+- **Auth:** Required (ownership)
+- **200:** Array of analysis objects for that evidence, newest first
+- Lets a reloaded page find an existing result, since `GET /api/analysis/{id}` needs an analysis id
+
+### `GET /api/evidence/{evidence_id}/custody`
+
+- **Auth:** Required (ownership)
+- **200:** `{ evidence, case_number, case_title, events[], event_count }`
+- `events` are `AuditLog` rows for that evidence in ascending time order
+- No new custody table: this is a projection of the existing audit trail
+
+### `GET /api/analysis/{analysis_id}/artifact/{kind}`
+
+- **Auth:** Required (analysis ownership)
+- **`kind`:** `heatmap` | `overlay` — anything else is `400 validation_error`
+- **200:** The Grad-CAM PNG produced by the existing XAI stage
+- **403:** `authorization_error` if the stored path resolves outside `artifacts/`
+- **404:** `not_found` when the analysis produced no such artifact
+
+### `GET /api/admin/users`
+
+- **Auth:** Required, **ADMIN only** (`403 authorization_error` for any other role)
+- **200:** every account from the `users` table via the standard user schema, each
+  annotated with `case_count` and `evidence_count`
+- Read-only projection; there is no create/update/suspend user endpoint
+
+### `GET /api/dashboard/stats`
+
+- **Auth:** Required. ADMIN sees all records (`scope: "all"`), others only their own (`scope: "own"`)
+- **200:** counts, status tallies, `prediction` distribution, a real 14-day `trend`
+  and 6-week `case_activity` series derived from stored timestamps, plus the
+  10 most recent analyses
+- Plain SQL aggregation; no model inference is involved
+
+## 9. Static frontend
+
+### `GET /evidex/` and `GET /evidex/{asset}`
+
+Serves `DIGITALEVIDENCE_FIXED/` (the EVIDEX UI) from the Flask origin so the
+Flask-Login session cookie stays first-party and no CORS configuration is
+required. Only `index.html`, `api.js`, `script.js` and `styles.css` are
+servable; every other path is `404`. The separate `frontend/` health shell
+continues to own `/` and `/static`.
+
+## 10. Error codes
 
 | HTTP | error_code | Meaning |
 |------|--------------|---------|
