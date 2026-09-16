@@ -64,15 +64,12 @@ class ModelLoader:
         model = ModelFactory.create(config=model_cfg)
         ckpt = Path(cfg.checkpoint_path) if cfg.checkpoint_path else None
         meta: dict[str, Any] = {}
-        if ckpt is not None and ckpt.exists():
-            meta = load_checkpoint(ckpt, model=model, map_location=device)
-            logger.info("Inference model loaded from %s", ckpt)
-        else:
-            logger.warning(
-                "Checkpoint missing (%s) — using factory weights only",
-                ckpt,
-            )
-            ckpt = ckpt or Path("missing.pt")
+        if ckpt is None:
+            raise FileNotFoundError("Inference checkpoint path is not configured")
+        if not ckpt.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
+        meta = load_checkpoint(ckpt, model=model, map_location=device)
+        logger.info("Inference model loaded from %s", ckpt)
 
         model.to(device)
         model.eval()

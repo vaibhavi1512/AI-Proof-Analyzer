@@ -86,11 +86,16 @@ def analysis_to_dict(run: AnalysisRun) -> dict[str, Any]:
             "explanation_json": run.explanation_json_path,
         }
     advanced_xai_results = None
+    real_probability = None
+    fake_probability = None
     if run.raw_result_json:
         try:
             import json as _json
             parsed = _json.loads(run.raw_result_json)
             advanced_xai_results = parsed.get("advanced_xai_results")
+            investigation = parsed.get("investigation") or {}
+            real_probability = investigation.get("real_probability")
+            fake_probability = investigation.get("fake_probability")
         except Exception:
             advanced_xai_results = None
     return {
@@ -100,6 +105,8 @@ def analysis_to_dict(run: AnalysisRun) -> dict[str, Any]:
         "case_id": run.case_id,
         "prediction": run.prediction,
         "confidence": run.confidence,
+        "real_probability": real_probability,
+        "fake_probability": fake_probability,
         "analysis_status": run.status,
         "model_name": run.model_name,
         "model_version": run.model_version,

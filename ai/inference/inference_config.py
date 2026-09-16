@@ -49,7 +49,7 @@ class InferenceConfig:
     supported_extensions: tuple[str, ...] = DEFAULT_SUPPORTED_EXTENSIONS
     device_preference: str = "auto"
     model_name: str = ModelName.EFFICIENTNET_B0.value
-    model_version: str = "sprint3.2-best"
+    model_version: str = "processed_final-best"
 
     project_root: Path = field(default_factory=_project_root)
     checkpoint_path: Path | None = None
@@ -62,7 +62,11 @@ class InferenceConfig:
 
         if self.checkpoint_path is None:
             self.checkpoint_path = (
-                self.project_root / "artifacts" / "checkpoints" / "best.pt"
+                self.project_root
+                / "artifacts"
+                / "checkpoints"
+                / "processed_final"
+                / "best.pt"
             )
         self.checkpoint_path = Path(self.checkpoint_path)
 

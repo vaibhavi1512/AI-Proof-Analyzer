@@ -41,6 +41,10 @@ class AiAnalysisBundle:
 _pipeline: InferencePipeline | None = None
 
 
+def _checkpoint_path() -> Path:
+    return _project_root() / "artifacts" / "checkpoints" / "processed_final" / "best.pt"
+
+
 def get_inference_pipeline() -> InferencePipeline:
     """Process-level cached pipeline (reuses ModelLoader cache)."""
 
@@ -49,6 +53,7 @@ def get_inference_pipeline() -> InferencePipeline:
         _pipeline = InferencePipeline(
             InferenceConfig(
                 project_root=_project_root(),
+                checkpoint_path=_checkpoint_path(),
                 device_preference="cpu",
             )
         )
@@ -84,7 +89,7 @@ def run_explanation(
         device_preference="cpu",
         explainer_name=explainer,
         artifact_dir=artifact_dir,
-        checkpoint_path=_project_root() / "artifacts" / "checkpoints" / "best.pt",
+        checkpoint_path=_checkpoint_path(),
     )
     engine = ExplainabilityEngine(cfg)
     # Reuse investigation ID from inference; isolate artefacts
@@ -146,7 +151,7 @@ def run_advanced_xai(
     }
 
     root = _project_root()
-    cp_path = root / "artifacts" / "checkpoints" / "best.pt"
+    cp_path = _checkpoint_path()
 
     methods_count = 0
     explainer_results: dict[str, Any] = {}
