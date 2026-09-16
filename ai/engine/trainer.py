@@ -69,11 +69,20 @@ class Trainer:
         self.model.to(self.device)
 
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = AdamW(
-            (p for p in self.model.parameters() if p.requires_grad),
-            lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay,
+        sampler = getattr(self.train_loader, "sampler", None)
+        if sampler is not None and hasattr(sampler, "expected_class_counts"):
+            logger.info(
+                "Effective training class distribution per epoch: REAL=%s FAKE=%s",
+                sampler.expected_class_counts[0],
+                sampler.expected_class_counts[1],
+            )
+        trainable = sum(
+            parameter.numel()
+            for parameter in self.model.parameters()
+            if parameter.requires_grad
         )
+        logger.info("Trainable parameters: %s", trainable)
+        self.optimizer = self._build_optimizer()
         self.scheduler = CosineAnnealingLR(
             self.optimizer,
             T_max=max(1, self.config.epochs),
@@ -86,6 +95,39 @@ class Trainer:
 
         if self.resume_from is not None:
             self._resume(self.resume_from)
+
+    def _build_optimizer(self) -> AdamW:
+        """Build AdamW, optionally using a lower LR for unfrozen features."""
+
+        backbone_lr = self.config.model.backbone_learning_rate
+        features = getattr(self.model, "features", None)
+        if backbone_lr is not None and features is not None:
+            feature_params = [p for p in features.parameters() if p.requires_grad]
+            feature_ids = {id(p) for p in feature_params}
+            other_params = [
+                p
+                for p in self.model.parameters()
+                if p.requires_grad and id(p) not in feature_ids
+            ]
+            if feature_params and other_params:
+                logger.info(
+                    "Using differential learning rates: classifier/other=%s backbone=%s",
+                    self.config.learning_rate,
+                    backbone_lr,
+                )
+                return AdamW(
+                    [
+                        {"params": other_params, "lr": self.config.learning_rate},
+                        {"params": feature_params, "lr": backbone_lr},
+                    ],
+                    weight_decay=self.config.weight_decay,
+                )
+
+        return AdamW(
+            (p for p in self.model.parameters() if p.requires_grad),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
 
     def _default_callbacks(self) -> list[Callback]:
         def _save(ctx: CallbackContext, path: Path) -> Path:
@@ -288,6 +330,7 @@ class Trainer:
                 "optimizer": "AdamW",
                 "scheduler": "CosineAnnealingLR",
                 "loss": "CrossEntropyLoss",
+                "sampling": "ClassBalancedCaseSampler",
             },
             metrics={
                 "final": last_metrics,

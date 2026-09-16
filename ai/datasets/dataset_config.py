@@ -11,9 +11,13 @@ Architecture:
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+
+logger = logging.getLogger("maya.datasets.config")
 
 
 class SplitName(str, Enum):
@@ -161,8 +165,12 @@ class DatasetConfig:
 
         if self.processed_dir_override is None:
             env_processed = _env_path("MAYA_PROCESSED_DATASET_DIR")
-            if env_processed is not None:
-                self.processed_dir_override = env_processed
+            if env_processed is None:
+                raise ValueError(
+                    "MAYA_PROCESSED_DATASET_DIR must be set explicitly; "
+                    "refusing to fall back to a legacy dataset."
+                )
+            self.processed_dir_override = env_processed
 
         env_seed = os.getenv("MAYA_RANDOM_SEED")
         if env_seed is not None and env_seed.strip():
@@ -182,6 +190,66 @@ class DatasetConfig:
         if self.catalogue_csv is None:
             env_csv = _env_path("MAYA_CATALOGUE_CSV")
             self.catalogue_csv = env_csv or (self.project_root / "archive" / "FINAL_DATASET.csv")
+
+        self._validate_processed_dataset()
+
+    def _validate_processed_dataset(self) -> None:
+        """Require an explicit, complete train/validation/test dataset root."""
+
+        if self.processed_dir_override is None:
+            raise ValueError("An explicit processed dataset directory is required.")
+        if not self.processed_dir_override.is_dir():
+            raise FileNotFoundError(
+                f"MAYA_PROCESSED_DATASET_DIR does not exist: "
+                f"{self.processed_dir_override}"
+            )
+        if self.processed_dir_override.name == "final" and not (
+            self.processed_dir_override / "manifest.csv"
+        ).is_file():
+            raise FileNotFoundError(
+                f"Final dataset manifest is missing: "
+                f"{self.processed_dir_override / 'manifest.csv'}"
+            )
+        for split in SplitName:
+            split_dir = self.processed_dir_override / split.value
+            if not split_dir.is_dir():
+                raise FileNotFoundError(
+                    f"Dataset split is missing from {self.processed_dir_override}: "
+                    f"{split_dir}"
+                )
+            for class_name in ClassName:
+                class_dir = split_dir / class_name.value
+                if not class_dir.is_dir():
+                    raise FileNotFoundError(
+                        f"Dataset class directory is missing: {class_dir}"
+                    )
+        counts = {
+            split.value: {
+                class_name.value: sum(
+                    1
+                    for path in (
+                        self.processed_dir_override / split.value / class_name.value
+                    ).iterdir()
+                    if path.is_file() and path.suffix.lower() in self.supported_extensions
+                )
+                for class_name in ClassName
+            }
+            for split in SplitName
+        }
+        if any(count == 0 for split in counts.values() for count in split.values()):
+            raise ValueError(
+                f"Dataset at {self.processed_dir_override} must contain both "
+                f"classes in every split: {counts}"
+            )
+        logger.info("DATASET ROOT: %s", self.processed_dir_override)
+        for split, split_counts in counts.items():
+            logger.info(
+                "%s PATH: %s | REAL COUNT: %s | FAKE COUNT: %s",
+                split.upper(),
+                self.processed_dir_override / split,
+                split_counts["REAL"],
+                split_counts["FAKE"],
+            )
 
     # --- Convenience split-size accessors (per-class totals) ---
 
@@ -217,7 +285,7 @@ class DatasetConfig:
 
         if self.processed_dir_override is not None:
             return self.processed_dir_override
-        return self.dataset_root / "processed"
+        raise ValueError("MAYA_PROCESSED_DATASET_DIR must be set explicitly.")
 
     @property
     def versions_dir(self) -> Path:

@@ -49,9 +49,10 @@ def build_efficientnet_b0(config: ModelConfig | None = None) -> nn.Module:
 
     cfg = config or get_model_config()
     logger.info(
-        "Building EfficientNet-B0 (pretrained=%s freeze=%s num_classes=%s)",
+        "Building EfficientNet-B0 (pretrained=%s freeze=%s fine_tune_blocks=%s num_classes=%s)",
         cfg.pretrained_weights,
         cfg.freeze_backbone,
+        cfg.fine_tune_last_feature_blocks,
         cfg.num_classes,
     )
 
@@ -62,6 +63,31 @@ def build_efficientnet_b0(config: ModelConfig | None = None) -> nn.Module:
         for parameter in model.features.parameters():
             parameter.requires_grad = False
         logger.info("Frozen EfficientNet-B0 feature extractor parameters")
+
+        fine_tune_blocks = int(cfg.fine_tune_last_feature_blocks)
+        if fine_tune_blocks < 0:
+            raise ValueError("fine_tune_last_feature_blocks must be non-negative")
+        if fine_tune_blocks:
+            feature_blocks = list(model.features.children())
+            if fine_tune_blocks > len(feature_blocks):
+                raise ValueError(
+                    "fine_tune_last_feature_blocks exceeds the number of "
+                    f"EfficientNet-B0 feature blocks ({len(feature_blocks)})"
+                )
+            for block in feature_blocks[-fine_tune_blocks:]:
+                for parameter in block.parameters():
+                    parameter.requires_grad = True
+            logger.info(
+                "Unfroze final %s EfficientNet-B0 feature block(s)", fine_tune_blocks
+            )
+            trainable_feature_names = [
+                name for name, parameter in model.features.named_parameters()
+                if parameter.requires_grad
+            ]
+            logger.info(
+                "Trainable EfficientNet feature layers: %s",
+                ", ".join(trainable_feature_names),
+            )
 
     in_features = int(model.classifier[1].in_features)
     model.classifier = _build_classifier(in_features, cfg.num_classes)

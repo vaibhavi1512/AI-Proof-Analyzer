@@ -95,6 +95,8 @@ class ModelConfig:
     # --- Weights / device preference ---
     pretrained_weights: bool = True
     freeze_backbone: bool = True
+    fine_tune_last_feature_blocks: int = 2
+    backbone_learning_rate: float | None = 1e-5
     device_preference: str = "auto"  # auto | cuda | mps | cpu
 
     # --- Artefact roots ---

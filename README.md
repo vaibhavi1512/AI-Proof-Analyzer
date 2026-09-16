@@ -121,19 +121,49 @@ Docs: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 ## Dataset workflow
 
 ```bash
-# 1) Place Kaggle REAL/FAKE images in dataset/raw/
-#    or materialize from catalogue CSV, or:
-#    $env:MAYA_RAW_DATASET_DIR = "D:\path\to\extract"
-
-# 2) Build balanced 224×224 corpus + reports
-python scripts/run_dataset_pipeline.py
-
-# 3) (Optional) Seal / re-seal version metadata for an existing processed set
-python scripts/seal_dataset_version.py
-
-# 4) Verify Dataset / DataLoader / versioning
-python -m pytest tests/test_dataset.py -q
+python scripts/build_final_dataset.py
 ```
+
+The current final dataset is generated from IMD2020 using
+`scripts/build_final_dataset.py`. The builder:
+
+- uses IMD2020 as the primary dataset
+- assigns `*_orig.jpg` images to `REAL` and other non-mask images to `FAKE`
+- keeps cases isolated across train, validation, and test splits
+- performs SHA-256 deduplication
+- excludes masks
+- creates standardized 224×224 RGB JPEG images
+- creates a separate external evaluation set from unseen cases
+- performs leakage and integrity audits
+- does not modify or delete source datasets
+
+Verified final dataset counts:
+
+| Split | Cases | REAL | FAKE | Total |
+|---|---:|---:|---:|---:|
+| Train | 246 | 245 | 1,738 | 1,983 |
+| Validation | 52 | 52 | 78 | 130 |
+| Test | 54 | 53 | 130 | 183 |
+| **Primary total** | **352** | **350** | **1,946** | **2,296** |
+
+External evaluation set:
+
+| Set | Cases | REAL | FAKE | Total |
+|---|---:|---:|---:|---:|
+| External | 62 | 62 | 62 | 124 |
+
+The external evaluation set is kept separate from both training and primary
+evaluation.
+
+The final dataset audit reported zero violations for:
+
+- SHA cross-partition overlap
+- case cross-partition overlap
+- duplicate-component cross-partition overlap
+- external/primary overlap
+- mask contamination
+- missing outputs
+- manifest/count mismatch
 
 Details: [`docs/DATASET.md`](docs/DATASET.md) · [`docs/DATASET_VERSIONING.md`](docs/DATASET_VERSIONING.md)
 
@@ -144,12 +174,19 @@ Details: [`docs/DATASET.md`](docs/DATASET.md) · [`docs/DATASET_VERSIONING.md`](
 ### Training (Phase 3.2)
 
 ```bash
-python scripts/train.py --profile debug
-python scripts/train.py --profile development
-python scripts/train.py --profile production
+$env:MAYA_PROCESSED_DATASET_DIR = "$PWD\dataset\final"
 
-python -m pytest tests/test_training.py -q
+python scripts/train.py --profile production --device cpu --notes "Final IMD2020 training with case-balanced sampling and final-two-block EfficientNet fine-tuning"
 ```
+
+The current training configuration uses:
+
+- EfficientNet-B0
+- pretrained ImageNet initialization
+- fine-tuning of the final two feature blocks
+- differential learning rates
+- case-balanced sampling
+- CPU-compatible training
 
 Logs: `logs/training.log` · Artefacts: `artifacts/phase3/sprint2/`
 
@@ -157,8 +194,13 @@ Logs: `logs/training.log` · Artefacts: `artifacts/phase3/sprint2/`
 
 ```bash
 python scripts/evaluate.py --threshold 0.5
+python scripts/evaluate_final_independent.py
 python -m pytest tests/test_evaluation.py -q
 ```
+
+`evaluate_final_independent.py` evaluates the trained model on the independent
+IMD2020 external corpus. This external evaluation remains separate from the
+primary test set.
 
 Artefacts: `artifacts/phase3/sprint3/`
 

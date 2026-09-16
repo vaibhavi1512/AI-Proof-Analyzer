@@ -116,6 +116,8 @@ class TrainingConfig:
             "image_size": self.model.image_size,
             "pretrained_weights": self.model.pretrained_weights,
             "freeze_backbone": self.model.freeze_backbone,
+            "fine_tune_last_feature_blocks": self.model.fine_tune_last_feature_blocks,
+            "backbone_learning_rate": self.model.backbone_learning_rate,
             "device_preference": self.model.device_preference,
         }
         return raw

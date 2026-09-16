@@ -7,6 +7,8 @@ Purpose:
 from __future__ import annotations
 
 import logging
+import csv
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -59,6 +61,7 @@ class MayaImageDataset(Dataset):
         self.transform = transform
         self.extensions = extensions or get_dataset_config().supported_extensions
         self.samples: list[tuple[Path, int]] = []
+        self.sample_group_ids: list[str] = []
         self.class_to_idx = {ClassName.REAL.value: 0, ClassName.FAKE.value: 1}
         self._index_samples()
 
@@ -73,6 +76,7 @@ class MayaImageDataset(Dataset):
             logger.error("Cannot list dataset root %s: %s", self.root, exc)
             return
 
+        manifest_groups = self._manifest_groups()
         for class_dir in class_dirs:
             try:
                 label = _label_from_folder(class_dir.name)
@@ -89,8 +93,29 @@ class MayaImageDataset(Dataset):
             for path in children:
                 if is_supported_image(path, self.extensions):
                     self.samples.append((path, label))
+                    group_id = manifest_groups.get(str(path.resolve()))
+                    self.sample_group_ids.append(group_id or str(path.resolve()))
 
         logger.info("Indexed %s samples from %s", len(self.samples), self.root)
+
+    def _manifest_groups(self) -> dict[str, str]:
+        manifest = self.root.parent / "manifest.csv"
+        if not manifest.is_file():
+            logger.warning(
+                "Dataset manifest missing; using per-file groups for %s: %s",
+                self.root,
+                manifest,
+            )
+            return {}
+        groups: dict[str, str] = {}
+        with manifest.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                output_path = row.get("output_path", "")
+                if not output_path:
+                    continue
+                normalized = output_path.replace("\\", os.sep).replace("/", os.sep)
+                groups[str((self.root.parents[2] / normalized).resolve())] = row["case_id"]
+        return groups
 
     def __len__(self) -> int:
         return len(self.samples)
