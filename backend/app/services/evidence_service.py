@@ -41,7 +41,7 @@ def upload_evidence(
     upload_root = Path(current_app.config["UPLOAD_DIR"])
     max_bytes = int(current_app.config.get("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))
 
-    display_name, stored, abs_path, size = store_evidence_file(
+    display_name, stored, abs_path, size, media_type = store_evidence_file(
         file,
         upload_root=upload_root,
         case_id=case.id,
@@ -54,13 +54,14 @@ def upload_evidence(
         raise InvalidEvidenceError(f"Failed to hash evidence: {exc}") from exc
 
     rel_path = abs_path.relative_to(upload_root).as_posix()
+    mime_fallback = "video/mp4" if media_type == "video" else "image/jpeg"
     evidence = Evidence(
         case_id=case.id,
         original_filename=display_name,
         stored_filename=stored,
         storage_path=rel_path,
-        media_type="image",
-        mime_type=file.mimetype or "image/jpeg",
+        media_type=media_type,
+        mime_type=file.mimetype or mime_fallback,
         file_size_bytes=size,
         sha256_hash=digest,
         status=EvidenceStatus.UPLOADED.value,

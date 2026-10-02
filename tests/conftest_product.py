@@ -45,6 +45,9 @@ def png_bytes() -> bytes:
     return buf.getvalue()
 
 
+TEST_PASSWORD = "Abcd@123"
+
+
 def register_and_login(client, *, username: str = "investigator1", email: str | None = None):
     email = email or f"{username}@maya.test"
     reg = client.post(
@@ -52,14 +55,14 @@ def register_and_login(client, *, username: str = "investigator1", email: str | 
         json={
             "email": email,
             "username": username,
-            "password": "securepass1",
+            "password": TEST_PASSWORD,
             "full_name": "Test User",
         },
     )
     assert reg.status_code == 201, reg.get_json()
     login = client.post(
         "/api/auth/login",
-        json={"login": username, "password": "securepass1"},
+        json={"login": username, "password": TEST_PASSWORD},
     )
     assert login.status_code == 200, login.get_json()
     return login.get_json()["data"]

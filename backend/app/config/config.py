@@ -24,6 +24,36 @@ REPORT_DIR = ROOT_DIR / "reports"
 load_dotenv(ROOT_DIR / ".env")
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    """Read a boolean setting. Blank values keep the default."""
+
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int) -> int:
+    """Read a non-negative integer setting. Invalid values keep the default."""
+
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return default
+    if value < 0:
+        return default
+    return value
+
+
+def _repo_video_checkpoint(filename: str) -> str:
+    """Repository-relative path for a frozen video checkpoint."""
+
+    return str(ROOT_DIR / "artifacts" / "checkpoints" / "video" / filename)
+
+
 class BaseConfig:
     """Shared configuration for all environments."""
 
@@ -71,6 +101,39 @@ class BaseConfig:
         os.getenv("FACE_VERIFICATION_MIN_SHARPNESS", "25.0")
     )
     FACE_VERIFICATION_CACHE_DIR: str | None = os.getenv("FACE_VERIFICATION_CACHE_DIR") or None
+
+    # Frozen 16-frame video model. Defaults live in this repository.
+    # VIDEO_VISUAL_CHECKPOINT and VIDEO_LSTM_CHECKPOINT can still override them.
+    VIDEO_VISUAL_CHECKPOINT: str = os.getenv("VIDEO_VISUAL_CHECKPOINT") or _repo_video_checkpoint(
+        "visual_model.pt"
+    )
+    VIDEO_LSTM_CHECKPOINT: str = os.getenv("VIDEO_LSTM_CHECKPOINT") or _repo_video_checkpoint(
+        "lstm.pt"
+    )
+    VIDEO_DECISION_THRESHOLD: float = 0.5
+    VIDEO_NUM_FRAMES: int = 16
+
+    # Authentication and analysis abuse limits. Zero disables that limit.
+    LOGIN_FAILURE_LIMIT: int = _int_env("LOGIN_FAILURE_LIMIT", 5)
+    LOGIN_FAILURE_WINDOW_SECONDS: int = _int_env("LOGIN_FAILURE_WINDOW_SECONDS", 60)
+    REGISTER_RATE_LIMIT: int = _int_env("REGISTER_RATE_LIMIT", 10)
+    REGISTER_RATE_WINDOW_SECONDS: int = _int_env("REGISTER_RATE_WINDOW_SECONDS", 60)
+    ANALYSIS_RATE_LIMIT: int = _int_env("ANALYSIS_RATE_LIMIT", 5)
+    VIDEO_ANALYSIS_RATE_LIMIT: int = _int_env("VIDEO_ANALYSIS_RATE_LIMIT", 3)
+    ANALYSIS_RATE_WINDOW_SECONDS: int = _int_env("ANALYSIS_RATE_WINDOW_SECONDS", 60)
+    # Report email is a separate bucket so a mail outage cannot consume the
+    # analysis limits, and analysis traffic cannot be used to spam SMTP.
+    REPORT_EMAIL_LIMIT: int = _int_env("REPORT_EMAIL_LIMIT", 5)
+    REPORT_EMAIL_WINDOW_SECONDS: int = _int_env("REPORT_EMAIL_WINDOW_SECONDS", 60)
+
+    # Outbound forensic-report mail. Credentials come only from the environment.
+    MAIL_ENABLED: bool = _bool_env("MAIL_ENABLED", False)
+    MAIL_HOST: str = os.getenv("MAIL_HOST", "")
+    MAIL_PORT: int = _int_env("MAIL_PORT", 587)
+    MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
+    MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")
+    MAIL_FROM: str = os.getenv("MAIL_FROM", "")
+    MAIL_USE_TLS: bool = _bool_env("MAIL_USE_TLS", True)
 
 
 class DevelopmentConfig(BaseConfig):

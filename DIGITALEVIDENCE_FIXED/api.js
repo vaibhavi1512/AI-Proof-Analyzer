@@ -115,6 +115,7 @@
     custody: (id) => request(`/api/evidence/${id}/custody`),
     analyses: (id) => request(`/api/evidence/${id}/analyses`),
     fileUrl: (id) => url(`/api/evidence/${id}/file`),
+    frameUrl: (id, frameNumber) => url(`/api/evidence/${id}/frames/${frameNumber}`),
     upload: (caseId, file, notes) => {
       const form = new FormData();
       form.append('file', file);
@@ -135,7 +136,11 @@
     }),
     get: (id) => request(`/api/analysis/${id}`),
     // Real Grad-CAM images produced by the existing XAI stage.
-    artifactUrl: (id, kind) => url(`/api/analysis/${id}/artifact/${kind}`),
+    artifactUrl: (id, kind, frameNumber) => {
+      const base = url(`/api/analysis/${id}/artifact/${kind}`);
+      if (frameNumber === undefined || frameNumber === null || frameNumber === '') return base;
+      return `${base}?frame=${encodeURIComponent(frameNumber)}`;
+    },
     listReports: (id) => request(`/api/analysis/${id}/reports`),
     generateReport: (id, notes) => request(`/api/analysis/${id}/report`, {
       method: 'POST',
@@ -194,6 +199,7 @@
     if (m.startsWith('audio/')) return 'Audio';
     const ext = (filename || '').split('.').pop().toLowerCase();
     if (['jpg', 'jpeg', 'png', 'bmp', 'webp'].includes(ext)) return 'Image';
+    if (['mp4', 'avi', 'mov', 'mkv'].includes(ext)) return 'Video';
     return 'Document';
   }
 
@@ -236,6 +242,7 @@
       filename: e.original_filename,
       type: kindFromMime(e.mime_type, e.original_filename),
       mimeType: e.mime_type,
+      mediaType: e.media_type,
       size: e.file_size,
       // Server-computed SHA-256 — authoritative, never recomputed client-side.
       sha256: e.sha256,
@@ -282,6 +289,72 @@
     return ev;
   }
 
+  function adaptVideoFrame(f) {
+    return {
+      frameNumber: f.frame_number,
+      timestampSeconds: f.timestamp_seconds,
+      framePath: f.frame_path,
+      prediction: f.prediction,
+      confidence: f.confidence,
+      realProbability: f.real_probability,
+      fakeProbability: f.fake_probability,
+    };
+  }
+
+  function adaptExplanation(expl) {
+    if (!expl) return null;
+    return {
+      explainer: expl.explainer,
+      heatmap: expl.heatmap,
+      overlay: expl.overlay,
+      explanationJson: expl.explanation_json,
+      frameNumber: expl.frame_number,
+      explainedFrames: Array.isArray(expl.explained_frames) ? expl.explained_frames : [],
+    };
+  }
+
+  function adaptVideoModelFrame(frame) {
+    if (!frame || typeof frame !== 'object') return null;
+    return {
+      frame_index: frame.frame_index,
+      timestamp_seconds: typeof frame.timestamp_seconds === 'number' ? frame.timestamp_seconds : null,
+      face_detected: frame.face_detected === true,
+      used_face_crop: frame.used_face_crop === true,
+      used_full_frame_fallback: frame.used_full_frame_fallback === true,
+      temporal_importance: typeof frame.temporal_importance === 'number' ? frame.temporal_importance : null,
+    };
+  }
+
+  function adaptVideoAnalysis(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const mapFrames = (items) => (Array.isArray(items) ? items.map(adaptVideoModelFrame).filter(Boolean) : []);
+    const xai = raw.xai && typeof raw.xai === 'object'
+      ? {
+          spatialWording: raw.xai.spatial_wording || 'regions contributing to the model prediction',
+          temporalWording: raw.xai.temporal_wording || 'frames with higher relative contribution',
+          frames: mapFrames(raw.xai.frames),
+        }
+      : null;
+    return {
+      prediction: raw.prediction === 'REAL' || raw.prediction === 'FAKE' ? raw.prediction : null,
+      pFake: typeof raw.p_fake === 'number' ? raw.p_fake : null,
+      threshold: typeof raw.threshold === 'number' ? raw.threshold : null,
+      framesAnalyzed: typeof raw.frames_analyzed === 'number' ? raw.frames_analyzed : null,
+      faceCropFrames: typeof raw.face_crop_frames === 'number' ? raw.face_crop_frames : null,
+      fallbackFrames: typeof raw.fallback_frames === 'number' ? raw.fallback_frames : null,
+      xaiAvailable: raw.xai_available === true,
+      modelName: raw.model_name || null,
+      modelVersion: raw.model_version || null,
+      pFakeMeaning: raw.p_fake_meaning || 'model-predicted probability for the FAKE class',
+      frames: mapFrames(raw.frames),
+      xai,
+      gradcamContactSheet: raw.gradcam_contact_sheet === true,
+      gradcamFrameIndices: Array.isArray(raw.gradcam_frame_indices)
+        ? raw.gradcam_frame_indices.filter((value) => Number.isInteger(value))
+        : [],
+    };
+  }
+
   function adaptAnalysis(run) {
     const confidence = typeof run.confidence === 'number' ? run.confidence : null;
     return {
@@ -301,12 +374,17 @@
       datasetVersion: run.dataset_version,
       trustScore: run.trust_score,
       qualityScore: run.quality_score,
-      explanation: run.explanation || null,
+      explanation: adaptExplanation(run.explanation),
+      frames: Array.isArray(run.frames) ? run.frames.map(adaptVideoFrame) : [],
+      suspiciousFrames: run.suspicious_frames || [],
+      temporalAnalysis: run.temporal_analysis || null,
+      aggregation: run.aggregation || null,
       advancedXai: run.advanced_xai_results || null,
       errorMessage: run.error_message,
       startedAt: run.started_at,
       completedAt: run.completed_at,
       artifactDir: run.artifact_dir,
+      videoAnalysis: adaptVideoAnalysis(run.video_analysis),
     };
   }
 
@@ -323,6 +401,9 @@
       sha256: r.sha256,
       generatedAt: r.generated_at,
       notes: r.investigator_notes,
+      emailStatus: r.email_delivery ? r.email_delivery.status : null,
+      emailMessage: r.email_delivery ? r.email_delivery.message : null,
+      maskedRecipient: r.email_delivery ? r.email_delivery.masked_recipient : null,
     };
   }
 

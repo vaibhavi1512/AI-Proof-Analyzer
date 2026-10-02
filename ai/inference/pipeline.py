@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ai.engine.experiment import read_dataset_version
 from ai.inference.artifacts import write_inference_artifacts
-from ai.inference.confidence import decide_from_probabilities
+from ai.inference.confidence import ConfidenceDecision, decide_from_probabilities
 from ai.inference.inference_config import InferenceConfig, get_inference_config
 from ai.inference.investigation_id import InvestigationIDGenerator
 from ai.inference.model_loader import ModelLoader
@@ -38,6 +38,27 @@ class InferencePipeline:
         self.loader = model_loader or ModelLoader(self.config)
         self.id_gen = InvestigationIDGenerator(self.config.id_state_path)
 
+    def classify_image(self, image_path: Path | str) -> ConfidenceDecision:
+        """Score one image with the cached model (no investigation artefacts)."""
+
+        _, _, decision = self._score_image(image_path)
+        return decision
+
+    def _score_image(self, image_path: Path | str):
+        """Shared preprocess → softmax → threshold path used by image and video frames."""
+
+        path = ensure_file(Path(image_path))
+        loaded = self.loader.load()
+        prepared = preprocess_image(path, self.config)
+        try:
+            probs = predict_probabilities(
+                loaded.model, prepared.tensor, loaded.device
+            )
+            decision = decide_from_probabilities(probs[0], self.config)
+        finally:
+            del prepared.tensor
+        return loaded, prepared, decision
+
     def run(
         self,
         image_path: Path | str,
@@ -60,20 +81,10 @@ class InferencePipeline:
         path = ensure_file(Path(image_path))
         logger.info("Inference pipeline start image=%s", path)
 
-        loaded = self.loader.load()
         status = "success"
         try:
             with timing_ms() as timer:
-                prepared = preprocess_image(path, self.config)
-                probs = predict_probabilities(
-                    loaded.model, prepared.tensor, loaded.device
-                )
-                # Single-image batch → first row
-                row = probs[0]
-                decision = decide_from_probabilities(row, self.config)
-                # Release batch tensor promptly
-                del prepared.tensor
-                del probs
+                loaded, prepared, decision = self._score_image(path)
         except ImagePreprocessError as exc:
             status = "failed"
             logger.error("Preprocess failed: %s", exc)

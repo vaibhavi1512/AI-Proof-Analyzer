@@ -51,7 +51,7 @@ def test_duplicate_registration(client) -> None:
         json={
             "email": "dupuser@maya.test",
             "username": "dupuser",
-            "password": "securepass1",
+            "password": "Abcd@123",
         },
     )
     assert again.status_code == 409

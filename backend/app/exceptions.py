@@ -82,3 +82,22 @@ class FaceVerificationNotFoundError(NotFoundError):
 class FaceVerificationProcessingError(MayaProductError):
     status_code = 500
     error_code = "face_verification_processing_error"
+
+
+class RateLimitError(MayaProductError):
+    status_code = 429
+    error_code = "rate_limited"
+
+
+class MailNotConfiguredError(MayaProductError):
+    """Email delivery is switched off or missing a host/from address."""
+
+    status_code = 503
+    error_code = "mail_not_configured"
+
+
+class MailDeliveryError(MayaProductError):
+    """The mail server could not accept the message."""
+
+    status_code = 502
+    error_code = "mail_delivery_error"

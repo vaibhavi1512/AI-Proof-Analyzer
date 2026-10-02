@@ -5,9 +5,14 @@ from __future__ import annotations
 from flask import Blueprint, request
 from flask_login import current_user
 
-from backend.app.exceptions import ValidationError
+from backend.app.exceptions import AuthenticationError, ValidationError
 from backend.app.schemas import api_success, user_to_dict
 from backend.app.security import login_required_api
+from backend.app.security.rate_limit import (
+    enforce_login_allowed,
+    enforce_register_rate_limit,
+    record_login_failure,
+)
 from backend.app.services import auth_service
 
 auth_bp = Blueprint("api_auth", __name__, url_prefix="/api/auth")
@@ -15,6 +20,7 @@ auth_bp = Blueprint("api_auth", __name__, url_prefix="/api/auth")
 
 @auth_bp.post("/register")
 def register():
+    enforce_register_rate_limit()
     payload = request.get_json(silent=True) or {}
     user = auth_service.register_user(
         email=str(payload.get("email", "")),
@@ -31,10 +37,15 @@ def login():
     login_id = payload.get("login") or payload.get("email") or payload.get("username")
     if not login_id:
         raise ValidationError("login (email or username) is required")
-    user = auth_service.authenticate_user(
-        login=str(login_id),
-        password=str(payload.get("password", "")),
-    )
+    enforce_login_allowed()
+    try:
+        user = auth_service.authenticate_user(
+            login=str(login_id),
+            password=str(payload.get("password", "")),
+        )
+    except AuthenticationError:
+        record_login_failure()
+        raise
     return api_success(user_to_dict(user), message="Logged in")
 
 

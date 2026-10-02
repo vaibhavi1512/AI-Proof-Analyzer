@@ -301,9 +301,193 @@ def test_artifact_denied_for_other_user(client, app):
     assert other.get(f"/api/analysis/{analysis_id}/artifact/heatmap").status_code in (403, 404)
 
 
+def test_artifact_serves_original_png_next_to_heatmap(client, app):
+    from backend.app.extensions import db
+    from backend.app.models.entities import AnalysisRun
+
+    register_and_login(client, username="artifactoriginal")
+    _case_id, evidence_id = _upload_evidence(client)
+    analysis_id = _analyze(client, evidence_id).get_json()["data"]["analysis_id"]
+
+    folder = Path(app.config["ROOT_DIR"]) / "artifacts" / "investigations" / "INV-ORIG" / "xai" / "gradcam" / "frame_000090"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "heatmap.png").write_bytes(_png((16, 16)))
+    (folder / "original.png").write_bytes(_png((24, 24)))
+    run = db.session.get(AnalysisRun, analysis_id)
+    run.heatmap_path = str(folder / "heatmap.png")
+    run.artifact_dir = str(folder.parents[2])
+    db.session.commit()
+
+    resp = client.get(f"/api/analysis/{analysis_id}/artifact/original")
+    assert resp.status_code == 200
+    assert resp.data.startswith(b"\x89PNG")
+
+
+def test_artifact_serves_frame_query_heatmap(client, app):
+    from backend.app.extensions import db
+    from backend.app.models.entities import AnalysisRun
+
+    register_and_login(client, username="artifactframeq")
+    _case_id, evidence_id = _upload_evidence(client)
+    analysis_id = _analyze(client, evidence_id).get_json()["data"]["analysis_id"]
+
+    root = Path(app.config["ROOT_DIR"]) / "artifacts" / "investigations" / "INV-FRAMES"
+    frame_dir = root / "xai" / "gradcam" / "frame_000030"
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    (frame_dir / "heatmap.png").write_bytes(_png((12, 12)))
+    run = db.session.get(AnalysisRun, analysis_id)
+    run.artifact_dir = str(root)
+    run.heatmap_path = str(frame_dir / "heatmap.png")
+    db.session.commit()
+
+    resp = client.get(f"/api/analysis/{analysis_id}/artifact/heatmap?frame=30")
+    assert resp.status_code == 200
+    assert resp.data.startswith(b"\x89PNG")
+    missing = client.get(f"/api/analysis/{analysis_id}/artifact/heatmap?frame=99")
+    assert missing.status_code == 404
+
+
+def test_analysis_dict_includes_explained_frames(client, app):
+    from backend.app.extensions import db
+    from backend.app.models.entities import AnalysisRun
+
+    register_and_login(client, username="explainedframes")
+    _case_id, evidence_id = _upload_evidence(client)
+    analysis_id = _analyze(client, evidence_id).get_json()["data"]["analysis_id"]
+
+    root = Path(app.config["ROOT_DIR"]) / "artifacts" / "investigations" / "INV-SCAN"
+    for n in (0, 90):
+        d = root / "xai" / "gradcam" / f"frame_{n:06d}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "heatmap.png").write_bytes(_png((8, 8)))
+    run = db.session.get(AnalysisRun, analysis_id)
+    run.heatmap_path = str(root / "xai" / "gradcam" / "frame_000090" / "heatmap.png")
+    run.artifact_dir = str(root)
+    run.generate_explanation = True
+    db.session.commit()
+
+    body = client.get(f"/api/analysis/{analysis_id}").get_json()["data"]
+    assert body["explanation"]["frame_number"] == 90
+    assert body["explanation"]["explained_frames"] == [0, 90]
+
+
+def _jpeg() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (12, 8), color=(10, 20, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_frame_endpoint_serves_extracted_jpeg(client, app):
+    from backend.app.extensions import db
+    from backend.app.models.entities import Evidence
+
+    register_and_login(client, username="framejpeg")
+    case_id, evidence_id = _upload_evidence(client)
+    row = db.session.get(Evidence, evidence_id)
+    row.media_type = "video"
+    row.original_filename = "clip.mp4"
+    db.session.commit()
+    frames_dir = Path(app.config["UPLOAD_DIR"]) / "cases" / str(case_id) / "frames" / str(evidence_id)
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    (frames_dir / "frame_000090.jpg").write_bytes(_jpeg())
+
+    resp = client.get(f"/api/evidence/{evidence_id}/frames/90")
+    assert resp.status_code == 200
+    assert resp.data[:2] == b"\xff\xd8"
+    assert client.get(f"/api/evidence/{evidence_id}/frames/91").status_code == 404
+
+
+def test_frame_endpoint_rejects_image_evidence(client):
+    register_and_login(client, username="frameimage")
+    _case_id, evidence_id = _upload_evidence(client)
+    resp = client.get(f"/api/evidence/{evidence_id}/frames/0")
+    assert resp.status_code == 400
+
+
+def test_frame_endpoint_denied_for_other_user(client, app):
+    from backend.app.extensions import db
+    from backend.app.models.entities import Evidence
+
+    register_and_login(client, username="frameowner")
+    case_id, evidence_id = _upload_evidence(client)
+    row = db.session.get(Evidence, evidence_id)
+    row.media_type = "video"
+    db.session.commit()
+    frames_dir = Path(app.config["UPLOAD_DIR"]) / "cases" / str(case_id) / "frames" / str(evidence_id)
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    (frames_dir / "frame_000000.jpg").write_bytes(_jpeg())
+    client.post("/api/auth/logout")
+
+    other = app.test_client()
+    register_and_login(other, username="frameintruder")
+    assert other.get(f"/api/evidence/{evidence_id}/frames/0").status_code in (403, 404)
+
+
 # --------------------------------------------------------------------------
 # Static hosting of the EVIDEX frontend
 # --------------------------------------------------------------------------
+
+
+def test_video_gradcam_artifact_is_served_without_a_filesystem_path(client, app):
+    import json
+
+    from backend.app.extensions import db
+    from backend.app.models.entities import AnalysisRun
+
+    register_and_login(client, username="videogradcam")
+    _case_id, evidence_id = _upload_evidence(client)
+    analysis_id = _analyze(client, evidence_id).get_json()["data"]["analysis_id"]
+    folder = (
+        Path(app.config["ROOT_DIR"])
+        / "artifacts"
+        / "investigations"
+        / "INV-VIDEO"
+        / "xai"
+        / "video"
+    )
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "gradcam_contact_sheet.png").write_bytes(_png((20, 12)))
+    (folder / "gradcam_frame_12.png").write_bytes(_png((16, 16)))
+    run = db.session.get(AnalysisRun, analysis_id)
+    run.artifact_dir = str(folder.parent.parent)
+    run.prediction = "FAKE"
+    run.raw_result_json = json.dumps(
+        {
+            "media_type": "video",
+            "fake_probability": 0.7099,
+            "video_analysis": {
+                "prediction": "FAKE",
+                "p_fake": 0.7099,
+                "threshold": 0.5,
+                "frames_analyzed": 16,
+                "face_crop_frames": 16,
+                "fallback_frames": 0,
+                "xai_available": True,
+                "model_name": "ffpp_video_lstm_v2",
+                "model_version": "v2-16frame",
+                "p_fake_meaning": "model-predicted probability for the FAKE class",
+            },
+            "xai_artifact_names": [
+                "gradcam_contact_sheet.png",
+                "gradcam_frame_12.png",
+            ],
+        }
+    )
+    db.session.commit()
+
+    body = client.get(f"/api/analysis/{analysis_id}").get_json()["data"]["video_analysis"]
+    assert body["prediction"] == "FAKE"
+    assert body["p_fake"] == pytest.approx(0.7099)
+    assert body["gradcam_contact_sheet"] is True
+    assert body["gradcam_frame_indices"] == [12]
+    assert "dataset_vid" not in json.dumps(body)
+    assert "gradcam_frame_12.png" not in json.dumps(body)
+    sheet = client.get(f"/api/analysis/{analysis_id}/artifact/video_contact_sheet")
+    frame = client.get(f"/api/analysis/{analysis_id}/artifact/video_gradcam?frame=12")
+    missing = client.get(f"/api/analysis/{analysis_id}/artifact/video_gradcam?frame=99")
+    assert sheet.status_code == 200 and sheet.data.startswith(b"\x89PNG")
+    assert frame.status_code == 200 and frame.data.startswith(b"\x89PNG")
+    assert missing.status_code == 404
 
 
 def test_evidex_shell_is_served(client, app):
@@ -319,6 +503,8 @@ def test_evidex_only_serves_allowlisted_assets(client, app):
     app.config["ROOT_DIR"] = ROOT
     assert client.get("/evidex/script.js").status_code == 200
     assert client.get("/evidex/api.js").status_code == 200
+    assert client.get("/evidex/video_result.js").status_code == 200
+    assert client.get("/evidex/password_policy.js").status_code == 200
     # Anything not in the allowlist is refused, traversal included.
     assert client.get("/evidex/../.env").status_code == 404
     assert client.get("/evidex/secrets.txt").status_code == 404

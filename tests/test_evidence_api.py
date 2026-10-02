@@ -66,6 +66,7 @@ def test_upload_valid_evidence_and_sha256(client) -> None:
     assert len(body["sha256"]) == 64
     assert body["status"] == "UPLOADED"
     assert body["original_filename"] == "sample.png"
+    assert body["media_type"] == "image"
     assert ".." not in body["stored_filename"]
 
     listed = client.get(f"/api/evidence/cases/{case_id}")

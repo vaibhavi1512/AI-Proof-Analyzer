@@ -1,8 +1,21 @@
-# MAYA — Media Authenticity Analyzer
+# AI-Proof-Analyzer — MAYA / EVIDEX
 
-AI-powered **digital evidence investigation platform** for authenticity assessment, explainable analysis, and professional investigation workflows.
+**AI-Based Digital Evidence Authenticity Verification System and Legal Admissibility**
 
-> Deepfake detection is one component—not the whole product.
+MAYA is the investigation platform. EVIDEX is the investigator interface. Together they support case work, evidence integrity, image analysis, and a production video authenticity pipeline with explainable outputs and forensic PDF reports.
+
+Deepfake detection is one component of the product. A model score is not a legal finding.
+
+## IMPORTANT FOR AI CODING ASSISTANTS
+
+Read this README before modifying code.
+
+- Preserve the final 16-frame LSTM video architecture.
+- Preserve the separation between image analysis and video analysis.
+- Preserve the no-face full-frame fallback. A missing face is not a FAKE decision.
+- Do not modify model checkpoints casually.
+- Do not commit secrets.
+- Inspect the existing code before making changes.
 
 ## Current status
 
@@ -11,133 +24,428 @@ AI-powered **digital evidence investigation platform** for authenticity assessme
 | Phase 0 — Design | Complete (`docs/`) |
 | Phase 1 — Foundation | Complete |
 | Phase 2 — Evidence data engineering | Complete |
-| Phase 2.5 — Dataset pipeline review & optimization | Complete |
+| Phase 2.5 — Dataset pipeline review and optimization | Complete |
 | Phase 3.1 — AI model architecture | Complete |
 | Phase 3.2 — AI training engine | Complete |
-| Phase 3.3 — AI validation & reporting | Complete |
+| Phase 3.3 — AI validation and reporting | Complete |
 | Phase 3.4 — Investigation inference | Complete |
 | Phase 3.5 — AI performance benchmarks | Complete |
 | Phase 4.1 — Explainability (Grad-CAM foundation) | Complete |
-| Phase 4.2 — Multi-Explainer Framework | Complete |
-| Phase 4.3 — Explanation Analytics & Trust | Complete |
-| Phase 4.4 — Explainability Validation & Benchmark | Complete |
-| Phase 4.5 — Advanced Explainability & Trust Layer | Complete |
-| Phase 3 Product — Auth / Cases / Evidence / APIs | Complete |
-| Phase 5 — Reports / Hardening / Docker / E2E Tests | Complete |
+| Phase 4.2 — Multi-explainer framework | Complete |
+| Phase 4.3 — Explanation analytics and trust | Complete |
+| Phase 4.4 — Explainability validation and benchmark | Complete |
+| Phase 4.5 — Advanced explainability and trust layer | Complete |
+| Phase 3 Product — Auth / cases / evidence / APIs | Complete |
+| Phase 5 — Reports / hardening / Docker / image E2E | Complete |
 | Phase 5 — Face reference verification (backend) | Complete |
+| Phase 13 — Pre-manipulation analysis | Done |
+| Phase 14 — Binary XAI | Done |
+| Phase 15 — MAYA backend integration | Done |
+| Phase 16 — EVIDEX frontend integration | Done |
+| Phase 17 — End-to-end testing | Completed / verified |
+| Application hardening | Done |
+| Automatic report email | Done |
 
-Roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
+Future work that is **not** implemented: a manipulation-type classifier and a manipulation-type UI. The production video model is binary REAL / FAKE only.
+
+Earlier design notes: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 
 ---
 
-## Hardware requirements
+## Production video pipeline
 
-- Windows 11 / Linux (Docker)
-- **8 GB RAM**
-- CPU-first (no dedicated GPU required)
-- Prefer `num_workers=0` DataLoader defaults
-
----
-
-## Quick start (Local development)
-
-```bash
-# From repository root
-python -m venv .venv
-
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-
-# Install CPU-optimized PyTorch (smaller, no NVIDIA needed)
-python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-
-copy .env.example .env
-
-# Initialize database + run
-python backend/run.py
+```
+Video upload
+  → video validation
+  → deterministic 16-frame sampling
+  → face-aware preprocessing
+       face detected → face crop
+       no face       → full-frame fallback
+  → EfficientNet-B0
+  → 1280-dimensional frame features
+  → 2-layer LSTM, hidden size 256
+  → REAL / FAKE
+  → binary XAI
+       relative temporal contribution
+       Grad-CAM
+  → EVIDEX
 ```
 
-- Home (health shell): http://127.0.0.1:5000/
+Production settings live in `ai/ffpp_video/constants.py`.
+
+| Setting | Production value |
+|---|---|
+| Frames | 16 |
+| Visual encoder | EfficientNet-B0 (`ffpp_visual_efficientnet_b0`) |
+| Frame feature size | 1280 |
+| Temporal model | 2-layer LSTM, hidden size 256 (`ffpp_video_lstm_v2`) |
+| Model version | `v2-16frame` |
+| Decision | FAKE when `p_fake` is at least 0.5, otherwise REAL |
+
+16 frames are the final production configuration. LSTM is the final temporal model. A GRU was used only as a comparison experiment. A 32-frame setting was evaluated and is not the final configuration.
+
+Every sampled frame is kept. If a face is not detected, that frame uses a full-frame fallback. No-face does not mean FAKE.
+
+Source for this pipeline is `ai/ffpp_video/` and `ai/video/`. Image inference remains a separate EfficientNet-B0 path under `ai/inference/` and `ai/models/`.
+
+### Final checkpoints
+
+These two files are the production video inference checkpoints shipped with the repository:
+
+```
+artifacts/checkpoints/video/visual_model.pt
+artifacts/checkpoints/video/lstm.pt
+```
+
+Leave `VIDEO_VISUAL_CHECKPOINT` and `VIDEO_LSTM_CHECKPOINT` unset to use those paths. Point them at another copy only when you intentionally want a different pair. Do not replace or retrain these files as part of ordinary application work.
+
+### Final 16-frame LSTM test metrics
+
+These figures are from the completed FaceForensics++ (FF++) test split used for this model. They are not universal deepfake-detection performance.
+
+| Metric | Value |
+|---|---:|
+| Accuracy | 0.7000 |
+| Precision | 0.8889 |
+| Recall | 0.7143 |
+| F1 | 0.7921 |
+| Specificity | 0.6429 |
+| Balanced accuracy | 0.6786 |
+| ROC-AUC | 0.7666 |
+
+Confusion matrix. Rows are the true class and columns are the predicted class, in the order REAL, FAKE:
+
+```
+[[9, 5],
+ [16, 40]]
+```
+
+The first row is true REAL (9 correct, 5 called FAKE). The second row is true FAKE (16 called REAL, 40 correct). Those counts are the source of the metrics above: accuracy `(9 + 40) / 70 = 0.7000`.
+
+The test split is a limited FF++ subset. It is not a stand-in for every real-world video.
+
+### Face-aware preprocessing
+
+Face-aware preprocessing selects a face crop when a face is detected and keeps the selection temporally continuous across the 16 frames. When no face is detected, the frame is still analyzed as a full-frame fallback.
+
+A completed audit of the sampled frames counted:
+
+| Item | Count |
+|---|---:|
+| Sampled frames | 8000 |
+| Face-crop frames | 7957 |
+| Full-frame fallback frames | 43 |
+| Videos with at least one fallback | 21 |
+
+The fallback subgroup is small. Those counts show that fallback happens and that those frames are retained. They do not support a strong claim about fallback-only accuracy.
+
+---
+
+## Confidence Score
+
+For binary video classification, Confidence Score is the model probability of the predicted class:
+
+- FAKE: Confidence Score = `p_fake`
+- REAL: Confidence Score = `1 - p_fake`
+
+EVIDEX shows that value as a percentage to two decimal places. It is a model-derived probability for the predicted class. It is not legal certainty, and it is not proof.
+
+Image analysis keeps its own image Model Confidence display. Video screens do not replace that image field.
+
+---
+
+## Explainable analysis (binary video XAI)
+
+Video XAI has two parts:
+
+1. **Relative temporal contribution** — how the 16 frame positions contribute relative to each other.
+2. **Grad-CAM spatial explanation** — regions contributing to the model prediction, including a video contact sheet and per-frame Grad-CAM artifacts.
+
+Preferred wording:
+
+- “Regions contributing to the model prediction”
+- “Relative temporal contribution”
+
+XAI explains model behavior. It does not prove manipulation, and it does not establish a legal conclusion.
+
+Image explainability remains the separate Phase 4 stack under `ai/explainability/` (Grad-CAM and optional advanced explainers). Video screens do not use the image artifact routes.
+
+---
+
+## EVIDEX video screens
+
+EVIDEX keeps three distinct views for one completed video analysis. They are not three copies of the same page.
+
+### Analysis
+
+- Prediction (REAL or FAKE)
+- Confidence Score
+- Model and model version
+- Frames analyzed
+- Face-crop frame count
+- Full-frame fallback count
+- Fallback note when a frame had no detected face
+- Relative temporal contribution graph
+
+The Analysis screen does not show the Grad-CAM gallery.
+
+### XAI Insights
+
+- Prediction
+- Confidence Score
+- Model identity
+- Explanation text
+- Temporal explanation
+- Spatial explanation
+- Grad-CAM and contact-sheet preview when those artifacts exist
+
+If XAI was not produced, the screen says that XAI is unavailable. It does not invent images or scores.
+
+### Tampering Map
+
+- Video contact sheet
+- The selected Grad-CAM frame
+- Frame index
+- Timestamp
+- Face-crop or full-frame fallback information for that frame
+- Selection among the available Grad-CAM frames
+
+Image evidence keeps the existing image screens, including Model Confidence and the image heatmap / overlay viewer. Image routes stay on the image artifact endpoints. Video routes use the video contact sheet and `video_gradcam` frame artifacts.
+
+Open the investigator UI at http://127.0.0.1:5000/evidex/ after the backend is running.
+
+---
+
+## Reports, audit timeline, and email
+
+Generating a report creates one forensic PDF for the current analysis, then attempts to email that same PDF.
+
+```
+Generate Report
+  → forensic PDF is created
+  → PDF includes the current case and evidence
+  → AI result and Confidence Score
+  → video frame and fallback information, when the analysis is video
+  → XAI artifacts when they exist
+  → case-scoped audit timeline
+  → the same PDF is emailed to the signed-in investigator
+```
+
+Image reports keep image Model Confidence, the image heatmap, and the image overlay.
+
+Video reports keep the video Confidence Score, frame and fallback counts, the temporal contribution graph, and Grad-CAM when those artifacts were produced.
+
+### Case-scoped audit timeline
+
+The PDF timeline includes only audit events whose case is the case of the current analysis. It does not include other cases belonging to the same investigator, investigator-wide login history, or unrelated case events.
+
+The investigator-facing audit API is separate. Admins can still review a broader audit log through that API. The report timeline is the case-scoped view.
+
+### Automatic email
+
+The recipient is the authenticated user’s registered `User.email`. There is no manual recipient field and no separate send button. The message is sent when the report is generated, not when the page is opened, refreshed, or when the PDF is downloaded.
+
+Each generated report is emailed once. A report already marked sent is not sent again. The record stores email status and the sent timestamp.
+
+If mail is disabled or SMTP delivery fails, the PDF is still created and can still be downloaded. The API reports that email delivery is unavailable. It does not describe a failed send as success.
+
+SMTP settings come only from the server environment. Names only:
+
+```
+MAIL_ENABLED
+MAIL_HOST
+MAIL_PORT
+MAIL_USERNAME
+MAIL_PASSWORD
+MAIL_FROM
+MAIL_USE_TLS
+```
+
+Do not put real credentials in this file, in frontend JavaScript, or in Git. Copy `.env.example` to `.env` locally. `.env` is gitignored.
+
+Report endpoints:
+
+- `POST /api/analysis/{id}/report` — create the PDF and attempt delivery to the signed-in user
+- `GET  /api/analysis/{id}/reports` — list reports for an analysis
+- `GET  /api/reports/{id}` — report metadata
+- `GET  /api/reports/{id}/download` — download the stored PDF
+
+The stored path is resolved on the server and must stay inside the report directory. The client cannot supply an arbitrary PDF path.
+
+---
+
+## Password policy and rate limits
+
+New passwords must have:
+
+- at least 8 characters
+- one uppercase letter
+- one lowercase letter
+- one number
+- one special character
+
+The registration form shows a live checklist and masks the password, with a show/hide control. The backend enforces the same rules and stores a Werkzeug password hash. Existing accounts are not disabled only because they were created before this policy. Login still checks the stored hash.
+
+Rate limits use a 60-second window. They reduce credential stuffing and repeated heavy analysis or mail work. The current limiter is in memory and fits this local, single-process server. A multi-process deployment needs a shared limiter.
+
+| Action | Default |
+|---|---|
+| Failed logins | 5 per 60 seconds, per client address |
+| Registration | 10 per 60 seconds, per client address |
+| Image analysis starts | 5 per 60 seconds, per user |
+| Video analysis starts | 3 per 60 seconds, per user |
+| Report email | 5 per 60 seconds, per user |
+
+Successful logins do not consume the failed-login bucket. Viewing an existing analysis is not an analysis start. Report email uses its own bucket so mail limits and analysis limits do not spend each other.
+
+---
+
+## Security controls in this build
+
+These controls are implemented in the application. This list is not a claim that every abuse case has been penetration-tested.
+
+| Control | What the code does |
+|---|---|
+| Access | Flask-Login session required on protected APIs |
+| Ownership | Case, evidence, analysis, and report actions check owner or admin |
+| Passwords | Werkzeug hashing, plus strength checks on new passwords |
+| Rate limits | Login, registration, image analysis, video analysis, and report email |
+| Integrity | Server-side SHA-256 on upload; client-supplied hashes are not trusted |
+| Files on disk | UUID names; downloads must resolve inside the storage root |
+| Reports | Server-side path resolution; no client-chosen PDF path |
+| Mail | SMTP credentials stay in server environment variables |
+| Secrets in Git | `.env` is ignored |
+| Local evidence | Uploads, generated reports, logs, and local databases are ignored |
+| Errors | API errors use a safe JSON envelope; audit details scrub secret-like fields |
+| Expensive image XAI | SHAP, fusion, and counterfactual run only when explicitly requested |
+
+Sessions use HTTP-only, SameSite=Lax cookies. Further notes: [`docs/SECURITY.md`](docs/SECURITY.md).
+
+---
+
+## Running the application
+
+Known local Windows workflow, from the repository root:
+
+```powershell
+cd C:\Users\sawar\OneDrive\Desktop\AI-Proof-Analyzer
+.\.venv\Scripts\activate
+python backend\run.py
+```
+
+The application listens on http://127.0.0.1:5000
+
+- Health shell: http://127.0.0.1:5000/
 - Health: http://127.0.0.1:5000/health
-- **EVIDEX investigator UI: http://127.0.0.1:5000/evidex/**
-- API prefix: `/api/*` (JSON, Flask-Login session cookies)
+- EVIDEX: http://127.0.0.1:5000/evidex/
+- API prefix: `/api`
+
+Run one current Flask process for that port. An older process left on the same port can serve stale code while a newer terminal looks idle.
+
+First-time setup, if `.venv` does not exist yet:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+copy .env.example .env
+python backend\run.py
+```
+
+Hardware expectation: Windows 11 or Linux, 8 GB RAM, CPU-first. A dedicated GPU is not required. Prefer `num_workers=0` for DataLoader defaults.
 
 ### Frontends
 
-Two separate frontends live in this repository:
-
 | Directory | Purpose | Served at |
 |---|---|---|
-| `DIGITALEVIDENCE_FIXED/` | **EVIDEX** — the investigator/forensic UI, integrated with the MAYA API | `/evidex/` |
-| `frontend/` | Minimal Jinja health/test shell from Phase 1 | `/` and `/static` |
+| `DIGITALEVIDENCE_FIXED/` | EVIDEX investigator UI | `/evidex/` |
+| `frontend/` | Minimal Jinja health shell from Phase 1 | `/` and `/static` |
 
-EVIDEX is plain HTML/CSS/JS with no build step — there is nothing to `npm
-install`. It is served from the Flask origin so the Flask-Login session cookie
-stays first-party and no CORS configuration is needed. Just start the backend
-and open `/evidex/`.
+EVIDEX is plain HTML, CSS, and JavaScript. There is no npm build. Flask serves it from the same origin so the session cookie stays first-party.
 
-To serve it from a different origin instead, set `window.EVIDEX_API_BASE`
-before `script.js` loads and add the matching CORS configuration; the API base
-URL is centralised in `DIGITALEVIDENCE_FIXED/api.js` and is not hardcoded
-anywhere else.
+### Docker
 
-The investigator pages (dashboard, cases, upload, analysis, XAI, heat map,
-chain of custody, evidence readiness, reports, profile) run against the real
-backend. The admin console and the public verification preview are still backed
-by seeded browser-local demo data and are labelled as such in the UI.
-
----
-
-## Docker deployment (Phase 5)
-
-CPU-first container with persistent volumes (database, uploads, reports, logs, investigation artifacts).
+CPU-first container with volumes for the database, uploads, reports, logs, and investigation artifacts:
 
 ```bash
-# Build + start
 docker-compose up --build -d
-
-# Check health
 docker-compose ps
 curl http://127.0.0.1:5000/health
-
-# Stop + keep volumes
 docker-compose down
 ```
 
-Volumes mounted:
-- `maya-db` → SQLite DB
-- `maya-uploads` → Evidence files
-- `maya-reports` → Generated PDF reports
-- `maya-logs` → Server logs
-- `maya-investigations` → AI/XAI investigation artifacts
-
-Docs: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+Deployment notes: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). The local Windows command above is the documented developer workflow. Do not treat an old alternate port as the application port.
 
 ---
 
-## Dataset workflow
+## What belongs in Git
 
-```bash
-python scripts/build_final_dataset.py
+The repository holds application source, tests, documentation, and the two production video checkpoints:
+
+```
+artifacts/checkpoints/video/visual_model.pt
+artifacts/checkpoints/video/lstm.pt
 ```
 
-The current final dataset is generated from IMD2020 using
-`scripts/build_final_dataset.py`. The builder:
+Local and generated material stays out of Git, including:
 
-- uses IMD2020 as the primary dataset
-- assigns `*_orig.jpg` images to `REAL` and other non-mask images to `FAKE`
-- keeps cases isolated across train, validation, and test splits
-- performs SHA-256 deduplication
-- excludes masks
-- creates standardized 224×224 RGB JPEG images
-- creates a separate external evaluation set from unseen cases
-- performs leakage and integrity audits
-- does not modify or delete source datasets
+- `.env`
+- `.venv/`
+- datasets and local image collections
+- uploads
+- generated reports
+- logs
+- local databases
+- temporary files
+- Postman local workspace state
+- unrelated checkpoints, including `artifacts/checkpoints/processed_final/`
 
-Verified final dataset counts:
+`.env.example` documents variable names only. Never commit a live SMTP password or other credential.
+
+---
+
+## Testing
+
+Completed product checks cover:
+
+- EVIDEX frontend UI, including the three video screens and the image heatmap path
+- authentication and password policy
+- rate limits
+- image-analysis regression
+- the video pipeline, including face-crop and full-frame fallback
+- video XAI
+- video and image report generation
+- automatic report email, with SMTP mocked in tests
+- the case-scoped audit timeline
+- end-to-end video UI rendering
+
+Examples:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_auth_api.py tests/test_password_security.py tests/test_video_e2e.py tests/test_video_xai.py tests/test_video_report.py tests/test_report_email.py tests/test_audit.py -q
+node --test tests/test_video_result_ui.js tests/test_password_policy_ui.js tests/test_report_email_ui.js
+```
+
+Some older dataset, training, evaluation, and SHAP tests need a local processed dataset (`MAYA_PROCESSED_DATASET_DIR`), extra checkpoints, or optional packages such as `shap`. Those tests are still in the tree. A failure there does not mean the product video pipeline is unconfigured. Do not treat the full optional suite as green unless that local setup is actually present.
+
+Image end-to-end coverage remains `tests/test_e2e_product.py`.
+
+---
+
+## Image dataset and image model
+
+The image corpus workflow is unchanged. `scripts/build_final_dataset.py` builds the final image dataset from IMD2020:
+
+- `*_orig.jpg` images are REAL; other non-mask images are FAKE
+- cases stay isolated across train, validation, and test
+- SHA-256 deduplication
+- masks excluded
+- standardized 224×224 RGB JPEG
+- a separate external evaluation set from unseen cases
+- leakage and integrity audits
+- source datasets are not modified or deleted
 
 | Split | Cases | REAL | FAKE | Total |
 |---|---:|---:|---:|---:|
@@ -146,182 +454,83 @@ Verified final dataset counts:
 | Test | 54 | 53 | 130 | 183 |
 | **Primary total** | **352** | **350** | **1,946** | **2,296** |
 
-External evaluation set:
-
 | Set | Cases | REAL | FAKE | Total |
 |---|---:|---:|---:|---:|
 | External | 62 | 62 | 62 | 124 |
 
-The external evaluation set is kept separate from both training and primary
-evaluation.
-
-The final dataset audit reported zero violations for:
-
-- SHA cross-partition overlap
-- case cross-partition overlap
-- duplicate-component cross-partition overlap
-- external/primary overlap
-- mask contamination
-- missing outputs
-- manifest/count mismatch
+The final image-dataset audit reported zero violations for SHA cross-partition overlap, case overlap, duplicate-component overlap, external/primary overlap, mask contamination, missing outputs, and manifest/count mismatch.
 
 Details: [`docs/DATASET.md`](docs/DATASET.md) · [`docs/DATASET_VERSIONING.md`](docs/DATASET_VERSIONING.md)
 
----
+Image training uses EfficientNet-B0, ImageNet initialization, fine-tuning of the final two feature blocks, differential learning rates, and case-balanced sampling:
 
-## AI Pipeline
-
-### Training (Phase 3.2)
-
-```bash
+```powershell
 $env:MAYA_PROCESSED_DATASET_DIR = "$PWD\dataset\final"
-
 python scripts/train.py --profile production --device cpu --notes "Final IMD2020 training with case-balanced sampling and final-two-block EfficientNet fine-tuning"
 ```
 
-The current training configuration uses:
-
-- EfficientNet-B0
-- pretrained ImageNet initialization
-- fine-tuning of the final two feature blocks
-- differential learning rates
-- case-balanced sampling
-- CPU-compatible training
-
-Logs: `logs/training.log` · Artefacts: `artifacts/phase3/sprint2/`
-
-### Evaluation (Phase 3.3)
-
-```bash
-python scripts/evaluate.py --threshold 0.5
-python scripts/evaluate_final_independent.py
-python -m pytest tests/test_evaluation.py -q
-```
-
-`evaluate_final_independent.py` evaluates the trained model on the independent
-IMD2020 external corpus. This external evaluation remains separate from the
-primary test set.
-
-Artefacts: `artifacts/phase3/sprint3/`
-
-### Inference (Phase 3.4)
-
-```bash
-python scripts/predict.py path\to\image.jpg
-python scripts/predict.py --folder path\to\images
-python -m pytest tests/test_inference.py -q
-```
-
-Artefacts: `artifacts/phase3/sprint4/`
-
-### Inference benchmarks (Phase 3.5)
-
-```bash
-python scripts/benchmark.py
-python scripts/benchmark.py --runs 20
-python -m pytest tests/test_benchmark.py -q
-```
-
-Artefacts: `artifacts/phase3/benchmark/`
+Image evaluation and prediction entry points remain `scripts/evaluate.py`, `scripts/evaluate_final_independent.py`, and `scripts/predict.py`. Those commands belong to the image model. They do not replace the frozen video checkpoints.
 
 ---
 
-## Explainability (Phase 4)
+## Image explainability (Phase 4)
 
-Plugin-based XAI stack under `ai/explainability/`:
+Plugin-based image XAI lives under `ai/explainability/`:
 
-| Sprint | What it does |
-|--------|----------------|
-| 4.1 | Grad-CAM foundation + explanation artefacts |
-| 4.2 | Grad-CAM++, LayerCAM, ScoreCAM, EigenCAM + comparison |
-| 4.3 | Focus / localization / quality / trust analytics |
-| 4.4 | Explainer benchmark, ranking, recommendations |
+| Sprint | Role |
+|---|---|
+| 4.1 | Grad-CAM foundation and explanation artifacts |
+| 4.2 | Grad-CAM++, LayerCAM, ScoreCAM, EigenCAM |
+| 4.3 | Focus, localization, quality, and trust analytics |
+| 4.4 | Explainer benchmark and ranking |
 | 4.5 | SHAP, faithfulness, counterfactual, fusion, audit |
 
 ```python
-# Single explanation (Sprint 4.1+)
 from ai.explainability import ExplainabilityEngine, ExplainabilityConfig
 
-result = ExplainabilityEngine(
+ExplainabilityEngine(
     ExplainabilityConfig(explainer_name="gradcam", device_preference="cpu")
 ).explain(r"path\to\image.jpg")
-
-# Multi-explainer comparison (Sprint 4.2)
-from ai.explainability import ExplainabilityEngine, ExplainabilityConfig
-
-ExplainabilityEngine(ExplainabilityConfig(device_preference="cpu")).compare(
-    r"path\to\image.jpg"
-)
-
-# Analytics on heatmaps (Sprint 4.3)
-from ai.explainability.analytics import ExplanationAnalyticsEngine, AnalyticsConfig
-
-ExplanationAnalyticsEngine(AnalyticsConfig()).analyze_from_heatmap_images(
-    {"gradcam": r"artifacts\phase4\sprint2\gradcam_heatmap.png"},
-    prediction="FAKE",
-    model_confidence=80.0,
-)
-
-# Rank all registered explainers (Sprint 4.4)
-from ai.explainability.benchmark import ExplainabilityBenchmarkSuite
-
-ExplainabilityBenchmarkSuite().run(r"path\to\image.jpg")
-
-# Advanced XAI: SHAP + faithfulness + counterfactual + trust (Sprint 4.5)
-from ai.explainability import AdvancedExplainabilityEngine, AdvancedXAIConfig
-
-AdvancedExplainabilityEngine(AdvancedXAIConfig(device_preference="cpu")).analyze(
-    r"path\to\image.jpg"
-)
 ```
 
-```bash
-python -m pytest tests/test_gradcam.py tests/test_multi_explainer.py `
-  tests/test_explanation_analytics.py tests/test_explainability_benchmark.py `
-  tests/test_shap.py tests/test_faithfulness.py tests/test_counterfactual.py `
-  tests/test_fusion.py tests/test_trust.py -q
-```
-
-Artefacts: `artifacts/phase4/sprint{1..5}/`
-Docs: [`PHASE4_SPRINT1.md`](docs/PHASE4_SPRINT1.md) · [`SPRINT2`](docs/PHASE4_SPRINT2.md) · [`SPRINT3`](docs/PHASE4_SPRINT3.md) · [`SPRINT4`](docs/PHASE4_SPRINT4.md) · [`SPRINT5`](docs/PHASE4_SPRINT5.md)
+Artifacts: `artifacts/phase4/sprint1/` through `artifacts/phase4/sprint5/`. Notes: [`docs/PHASE4_SPRINT1.md`](docs/PHASE4_SPRINT1.md) through [`docs/PHASE4_SPRINT5.md`](docs/PHASE4_SPRINT5.md).
 
 ---
 
-## Product APIs (Phase 3 + Phase 5)
+## Product API
 
-Flask-Login sessions + SQLAlchemy models under `backend/app/`. All protected routes use `@login_required_api` decorator.
-
-```bash
-python backend/run.py
-```
-
-### Full API reference: [`docs/API.md`](docs/API.md)
+Protected routes use the Flask-Login API decorator. Full reference: [`docs/API.md`](docs/API.md).
 
 ### Auth
-- `POST /api/auth/register` — Register user (if `ALLOW_PUBLIC_REGISTRATION=true`)
-- `POST /api/auth/login` — Start session
-- `POST /api/auth/logout` — End session
-- `GET  /api/auth/me` — Current user profile
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET  /api/auth/me`
 
 ### Cases
-- `POST /api/cases` — Create investigation case
-- `GET  /api/cases` — List own cases (admin sees all)
-- `GET  /api/cases/{id}` — Case details (ownership enforced)
-- `PATCH /api/cases/{id}` — Update case metadata
-- `POST /api/cases/{id}/close` — Close case
+
+- `POST /api/cases`
+- `GET  /api/cases`
+- `GET  /api/cases/{id}`
+- `PATCH /api/cases/{id}`
+- `POST /api/cases/{id}/close`
 
 ### Evidence
-- `POST /api/evidence/cases/{id}` — Upload evidence (multipart/form-data) — **SHA-256 computed server-side; client hashes NEVER trusted
-- `GET  /api/evidence/cases/{id}` — List evidence in case
-- `GET  /api/evidence/{id}` — Evidence metadata
-- `POST /api/evidence/{id}/verify-integrity` — Recompute SHA-256 on-disk; compare with stored hash
 
-### Analysis / Investigation (real AI inference + XAI)
-- `POST /api/evidence/{id}/analyze` — Run EfficientNet-B0 inference + optional XAI
-- `GET  /api/analysis/{id}` — Retrieve analysis results
-- `GET  /api/investigations/{id}` — Alias for above
+- `POST /api/evidence/cases/{id}` — multipart upload; SHA-256 is computed on the server
+- `GET  /api/evidence/cases/{id}`
+- `GET  /api/evidence/{id}`
+- `POST /api/evidence/{id}/verify-integrity`
 
-Analysis request body (opt-in expensive methods:
+### Analysis
+
+- `POST /api/evidence/{id}/analyze` — image EfficientNet-B0, or the 16-frame video pipeline when the evidence is video
+- `GET  /api/analysis/{id}`
+- `GET  /api/investigations/{id}` — alias of the analysis read
+
+Image requests may opt into extra explainers:
+
 ```json
 {
   "generate_explanation": true,
@@ -337,185 +546,110 @@ Analysis request body (opt-in expensive methods:
 }
 ```
 
-### PDF Reports (Phase 5)
-- `POST /api/analysis/{id}/report` — Generate signed, hashed investigation PDF
-- `GET  /api/analysis/{id}/reports` — List reports for an analysis
-- `GET  /api/reports/{id}` — Report metadata
-- `GET  /api/reports/{id}/download` — Binary PDF download (path-traversal-safe)
+### Audit API
 
-Report includes: case & evidence metadata, authenticity assessment, SHA-256 integrity, XAI visualizations, advanced XAI artifact refs, audit timeline, investigator notes, and standard disclaimer. Source: [`report_service.py`](backend/app/services/report_service.py)
+- `GET /api/audit` — an admin sees the broader log; an investigator sees their own events
 
-### Audit Trail
-- `GET /api/audit` — ADMIN: all events; regular user: own events only
+That API is not the PDF timeline. Report PDFs are filtered to the current analysis case only.
 
-Event types: `USER_REGISTERED`, `USER_LOGIN`, `USER_LOGOUT`, `CASE_CREATED`, `CASE_UPDATED`, `CASE_CLOSED`, `EVIDENCE_UPLOADED`, `EVIDENCE_ACCESSED`, `EVIDENCE_VERIFIED`, `ANALYSIS_STARTED`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`, `XAI_GENERATED`, `REPORT_GENERATED`
-
-### Product API tests:
-```bash
-python -m pytest tests/test_auth_api.py tests/test_cases_api.py `
-  tests/test_evidence_api.py tests/test_analysis_api.py -q
-```
-
-Product docs: [`PHASE3_PRODUCT.md`](docs/PHASE3_PRODUCT.md) · [`PHASE3_PRODUCT_ARCHITECTURE.md`](docs/PHASE3_PRODUCT_ARCHITECTURE.md)
+Product notes: [`docs/PHASE3_PRODUCT.md`](docs/PHASE3_PRODUCT.md) · [`docs/PHASE3_PRODUCT_ARCHITECTURE.md`](docs/PHASE3_PRODUCT_ARCHITECTURE.md)
 
 ---
 
-## End-to-End tests (Phase 5)
+## Investigation workflow
 
-Genuine E2E flow with real AI inference (non-mocked):
+1. Create a case.
+2. Upload evidence.
+3. Verify integrity.
+4. Analyze. Image evidence uses the image model. Video evidence uses the 16-frame LSTM pipeline.
+5. Review Analysis, XAI Insights, and Tampering Map in EVIDEX. Image evidence keeps the image heatmap and overlay.
+6. Generate the PDF. The same file is emailed to the signed-in investigator when SMTP is configured.
 
-```bash
-python -m pytest tests/test_e2e_product.py -q -v
-```
+Each investigation can store artifacts under `artifacts/investigations/`. Evidence and reports are SHA-256 sealed and audit-logged.
 
-Covered flows:
-1. Register → Login → Create Case → Upload Evidence → **Verify SHA-256 integrity → **Run real EfficientNet-B0 inference → **Persist to DB → **Audit trail → **Artifact directory creation
-2. Cross-user authorization enforcement (403 at every layer)
-3. Tampered evidence integrity detection (MODIFIED)
-
-Diagnostic script:
-```bash
-python scripts/_diag_product_ai.py
-```
+Guide: [`docs/INVESTIGATION_WORKFLOW.md`](docs/INVESTIGATION_WORKFLOW.md) · [`docs/VIVA_GUIDE.md`](docs/VIVA_GUIDE.md)
 
 ---
 
-## Security (Phase 5 hardening)
-
-| Control | Implementation |
-|---|---|
-| Passwords | Werkzeug argon2-family hashing |
-| Sessions | HTTP-only, SameSite=Lax cookies |
-| Authorization | Owner OR ADMIN at every service call (cases/evidence/analysis/report) |
-| Integrity | Server SHA-256 on upload + re-verify API; client hashes ignored |
-| Filenames | UUID-based; never client names on disk |
-| Path traversal | `.resolve()` + `startswith(root)` on all downloads |
-| Error handling | Safe JSON envelope; stack traces never leak to client |
-| Audit logs | Append-only; secrets (password/token/secret/auth) scrubbed before insert |
-| Uploads | MIME + extension + size double-checked |
-| DoS gates | SHAP/fusion/counterfactual only on explicit `advanced_xai` opt-in |
-
-Full details: [`docs/SECURITY.md`](docs/SECURITY.md)
-
----
-
-## Processing pipeline
+## Repository layout
 
 ```
-raw/ → inventory → integrity → statistics/plots
-     → seeded sample → preprocess (224 RGB)
-     → validate → seal versions/v1 + dataset_metadata.json
-```
-
-PyTorch access:
-
-```python
-from ai.datasets import create_dataloader, build_split_dataset
-from ai.datasets.dataset_config import SplitName
-
-loader = create_dataloader(SplitName.TRAIN, batch_size=16, transform_name="train")
-```
-
----
-
-## Folder structure
-
-```
-MAYA/
+AI-Proof-Analyzer/
 ├── ai/
-│   ├── datasets/          # Corpus pipeline + DataLoaders + versioning
-│   ├── models/            # EfficientNet-B0 + model factory
-│   ├── training/          # Training CLI / callbacks / logging
-│   ├── evaluation/        # Metrics + offline eval
-│   ├── inference/         # Investigation prediction pipeline
-│   ├── benchmark/     # Inference performance suite
-│   ├── engine/            # Trainer + checkpoint + experiment history
-│   └── explainability/    # Phase 4 XAI (explainers, analytics, benchmark, SHAP, fusion, trust)
-├── backend/               # Flask application (product APIs)
-│   ├── app/
-│   │   ├── api/            # JSON route blueprints (auth/cases/evidence/analysis/audit)
-│   │   ├── services/       # Business logic + ownership checks
-│   │   ├── models/         # SQLAlchemy entities + enums
-│   │   ├── audit/        # Append-only audit service
-│   │   ├── integrations/ # AI bridge (backend→ai/)
-│   │   ├── storage/      # Evidence file storage
-│   │   ├── security/    # Password + session helpers
-│   │   ├── config/      # Config classes
-│   │   ├── database/  # DB init
-│   │   └── exceptions.py  # Safe error model
-├── frontend/              # Templates & static assets (simple web shell)
-├── dataset/
-│   ├── raw/               # Immutable source
-│   ├── versions/       # Sealed metadata + CURRENT pointer
-│   └── reports/          # Dataset pipeline reports
+│   ├── datasets/           # Image corpus pipeline and DataLoaders
+│   ├── models/             # Image EfficientNet-B0
+│   ├── training/           # Image training CLI
+│   ├── evaluation/         # Image metrics and offline eval
+│   ├── inference/          # Image investigation prediction
+│   ├── ffpp_video/         # Production 16-frame visual encoder, LSTM, face fallback, Grad-CAM
+│   ├── video/              # Video frame aggregation and temporal helpers
+│   ├── benchmark/
+│   ├── engine/
+│   └── explainability/     # Image XAI
+├── backend/app/
+│   ├── api/
+│   ├── services/           # Analysis, video, reports, email
+│   ├── models/
+│   ├── security/           # Passwords and rate limits
+│   └── config/
+├── DIGITALEVIDENCE_FIXED/  # EVIDEX UI
+├── frontend/               # Phase 1 health shell
 ├── artifacts/
-│   ├── phase3/            # Train / eval / infer / bench outputs
-│   ├── phase4/            # Explainability sprint artefacts
-│   └── investigations/  # Per-case AI/XAI investigation runs (INV-{ID}/)
+│   ├── checkpoints/video/  # visual_model.pt and lstm.pt
+│   ├── phase3/             # Image train / eval / infer outputs
+│   ├── phase4/             # Image explainability artifacts
+│   └── investigations/     # Per-investigation runtime bundles (contents gitignored)
+├── dataset/                # Scaffolding tracked; image blobs local
 ├── docs/
 ├── tests/
 ├── scripts/
-├── uploads/             # Evidence uploads (gitignored, Docker volume)
-├── reports/             # Generated PDFs (gitignored, Docker volume)
-├── logs/                # Server logs (gitignored, Docker volume)
-├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
+├── uploads/                # Local evidence (gitignored)
+├── reports/                # Generated PDFs (gitignored)
+└── logs/                   # Local logs (gitignored)
 ```
 
----
+Database entities in `backend/app/models/entities.py`:
 
-## Database entities (SQLAlchemy)
+- **User** — email, username, role, password hash
+- **Case** — `CASE-{year}-{seq}`, status, owner
+- **Evidence** — UUID filename, server-computed SHA-256, case
+- **AnalysisRun** — prediction, confidence, video analysis payload, XAI paths
+- **AuditLog** — append-only events, including case id
+- **InvestigationReport** — `RPT-{year}-{seq}`, SHA-256, storage path, email status, sent timestamp
 
-- **User** — id, email, username, role (INVESTIGATOR/ADMIN), password_hash
-- **Case** — CASE-{year}-{seq} case_number, status (OPEN/IN_PROGRESS/CLOSED/ARCHIVED), priority, owner FK
-- **Evidence** — stored_filename (UUID), storage_path, **sha256_hash (server-computed), file_size, mime_type, status, case FK
-- **AnalysisRun** — INV-{year}-{seq} investigation_id, prediction, confidence, {trust/quality scores, heatmap/overlay paths, advanced_xai JSON, evidence FK
-- **AuditLog** — Append-only event log (timestamp, event_type, FK refs to case/evidence/analysis/user, scrubbed details
-- **InvestigationReport** — RPT-{year}-{seq} report_number, **sha256, storage_path, PDF metadata
+Active image-dataset pointer: `dataset/versions/CURRENT`.
 
-Schema: [`entities.py`](backend/app/models/entities.py)
-
----
-
-## Dataset versioning
-
-Active version pointer: `dataset/versions/CURRENT`
-Sealed metadata: `dataset/versions/v1/dataset_metadata.json`
-
-Future corpora (**FaceForensics++**, **Celeb-DF**) plug in via config / `MAYA_RAW_DATASET_DIR` without changing pipeline architecture.
+Architecture rule: code under `ai/` does not import Flask. The backend calls into `ai/` through service and integration layers.
 
 ---
 
-## Investigation Workflow
+## Known limitations
 
-1. **Create Case → **Upload Evidence** → **Verify Integrity → **Analyze** (AI + XAI) → **Generate PDF Report**
-
-Each investigation gets a unique `INV-{ID}` directory under `artifacts/investigations/` containing: prediction JSON, heatmaps, overlays, SHAP visualizations, and advanced XAI outputs. All evidence and reports are SHA-256 sealed and audit-logged.
-
-Guide: [`INVESTIGATION_WORKFLOW.md`](docs/INVESTIGATION_WORKFLOW.md) · [`VIVA_GUIDE.md`](docs/VIVA_GUIDE.md)
-
----
-
-## Documentation
-
-Start here: [`docs/00_PHASE0_INDEX.md`](docs/00_PHASE0_INDEX.md)
-
-Phase 3 sprint notes: [`PHASE3_SPRINT1`](docs/PHASE3_SPRINT1.md)–[`SPRINT5`](docs/PHASE3_SPRINT5.md)
-Phase 4 sprint notes: [`PHASE4_SPRINT1`](docs/PHASE4_SPRINT1.md)–[`SPRINT5`](docs/PHASE4_SPRINT5.md)
-
-Other: [`API.md`](docs/API.md) · [`SECURITY.md`](docs/SECURITY.md) · [`DATABASE.md`](docs/DATABASE.md) · [`DEPLOYMENT.md`](docs/DEPLOYMENT.md) · [`TESTING.md`](docs/TESTING.md) · [`XAI_ARCHITECTURE.md)](docs/XAI_ARCHITECTURE.md)
+- The published binary video metrics come from a limited FF++ test split.
+- That split does not represent all real-world videos.
+- The production video classifier is binary REAL / FAKE.
+- Manipulation-type classification is not part of the current production pipeline.
+- Face detection can miss a face.
+- Full-frame fallback keeps the frame in the sequence. It is not a fake detector.
+- Grad-CAM and temporal XAI explain the model. They are not proof of manipulation.
+- Confidence Score is the predicted-class probability, not legal certainty.
+- In-memory rate limiting matches the current single-process local server. Multi-process deployment needs shared limit state.
+- Report email is sent only when SMTP is configured and the server accepts the message. The PDF still exists when delivery fails.
 
 ---
 
-## Architecture
+## Documentation index
 
-**Presentation → Application → Business Logic → AI Analysis → Storage**
+Start at [`docs/00_PHASE0_INDEX.md`](docs/00_PHASE0_INDEX.md).
 
-AI code under `ai/` must not import Flask. Explainability is independent of training/eval/benchmark packages and is requested by higher layers when needed.
+Phase 3: [`docs/PHASE3_SPRINT1.md`](docs/PHASE3_SPRINT1.md) through [`docs/PHASE3_SPRINT5.md`](docs/PHASE3_SPRINT5.md)
+
+Phase 4: [`docs/PHASE4_SPRINT1.md`](docs/PHASE4_SPRINT1.md) through [`docs/PHASE4_SPRINT5.md`](docs/PHASE4_SPRINT5.md)
+
+Also: [`docs/API.md`](docs/API.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/DATABASE.md`](docs/DATABASE.md) · [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) · [`docs/TESTING.md`](docs/TESTING.md) · [`docs/XAI_ARCHITECTURE.md`](docs/XAI_ARCHITECTURE.md)
 
 ---
 
 ## License / use
 
-Intended for academic and authorized investigative training contexts. Not a consumer public scanner.
+Intended for academic and authorized investigative training. This is not a consumer public scanner, and a model output is not a legal determination.

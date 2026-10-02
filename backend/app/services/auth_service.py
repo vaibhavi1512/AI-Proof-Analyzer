@@ -15,6 +15,7 @@ from backend.app.extensions import db
 from backend.app.models.entities import User
 from backend.app.models.enums import AuditEventType, UserRole
 from backend.app.security import hash_password, verify_password
+from backend.app.security.passwords import validate_password_strength
 
 logger = logging.getLogger("maya.backend.auth")
 
@@ -36,8 +37,7 @@ def register_user(
         raise ValidationError("Valid email is required")
     if not username or len(username) < 3:
         raise ValidationError("Username must be at least 3 characters")
-    if not password or len(password) < 8:
-        raise ValidationError("Password must be at least 8 characters")
+    validate_password_strength(password)
     if role not in {UserRole.INVESTIGATOR, UserRole.ADMIN}:
         raise ValidationError("Invalid role")
 

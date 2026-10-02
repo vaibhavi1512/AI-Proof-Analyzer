@@ -48,6 +48,9 @@ def create_app(config_name: str | None = None) -> Flask:
     init_database(app)
 
     login_manager.init_app(app)
+    from backend.app.security.rate_limit import SlidingWindowLimiter
+
+    app.extensions["rate_limiter"] = SlidingWindowLimiter()
 
     @login_manager.user_loader
     def load_user(user_id: str):

@@ -34,7 +34,9 @@ def sample_image(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def infer_config(tmp_path: Path) -> InferenceConfig:
-    ckpt = ROOT / "artifacts" / "checkpoints" / "best.pt"
+    product = ROOT / "artifacts" / "checkpoints" / "processed_final" / "best.pt"
+    legacy = ROOT / "artifacts" / "checkpoints" / "best.pt"
+    ckpt = product if product.exists() else legacy
     return InferenceConfig(
         project_root=ROOT,
         checkpoint_path=ckpt if ckpt.exists() else ROOT / "missing.pt",
@@ -144,3 +146,15 @@ def test_pipeline_json_and_markdown(infer_config: InferenceConfig, sample_image:
     assert (out / "prediction_report.md").exists()
     assert (out / "pipeline_summary.md").exists()
     assert (out / "prediction_log.txt").exists()
+
+
+def test_classify_image_matches_run_without_new_investigation(infer_config: InferenceConfig, sample_image: Path) -> None:
+    pipeline = InferencePipeline(infer_config)
+    scored = pipeline.classify_image(sample_image)
+    result = pipeline.run(sample_image)
+    assert scored.predicted_label == result.prediction
+    assert scored.real_probability == pytest.approx(result.real_probability, abs=1e-6)
+    assert scored.fake_probability == pytest.approx(result.fake_probability, abs=1e-6)
+    assert scored.confidence == pytest.approx(result.confidence, abs=1e-6)
+    assert pipeline.loader._cached is not None
+    assert pipeline.loader.load() is pipeline.loader._cached

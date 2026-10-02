@@ -324,7 +324,7 @@ def test_api_unauthorized_evidence_and_case(client) -> None:
 
     client.post("/api/auth/logout")
     login_owner = client.post(
-        "/api/auth/login", json={"login": "faceuser", "password": "securepass1"}
+        "/api/auth/login", json={"login": "faceuser", "password": "Abcd@123"}
     )
     assert login_owner.status_code == 200, login_owner.get_json()
     created = _post_verify(
@@ -335,7 +335,7 @@ def test_api_unauthorized_evidence_and_case(client) -> None:
     vid = created.get_json()["data"]["verification_id"]
     client.post("/api/auth/logout")
     login_other = client.post(
-        "/api/auth/login", json={"login": "otherinv", "password": "securepass1"}
+        "/api/auth/login", json={"login": "otherinv", "password": "Abcd@123"}
     )
     assert login_other.status_code == 200
     denied = client.get(f"/api/face-verifications/{vid}")

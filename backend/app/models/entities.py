@@ -261,6 +261,10 @@ class InvestigationReport(db.Model):
     title: Mapped[str] = mapped_column(String(512), nullable=False, default="MAYA Investigation Report")
     investigator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow, index=True)
+    # Set when this exact PDF has already been handed to the mail server.
+    # Refreshing the analysis page does not create another row, so it does not send again.
+    email_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    emailed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     case: Mapped[Case] = relationship("Case")
     evidence: Mapped[Evidence] = relationship("Evidence")

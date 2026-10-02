@@ -66,13 +66,22 @@ archive.zip
 *.db
 *.sqlite3
 *.pth
-*.pt
 *.onnx
 *.h5
 *.ckpt
+# Ignore .pt weights without a blanket *.pt rule. A blanket rule would also
+# match the two production video checkpoints, which are explicit exceptions
+# and must stay trackable:
+#   artifacts/checkpoints/video/visual_model.pt
+#   artifacts/checkpoints/video/lstm.pt
+/*.pt
+*/*.pt
+*/*/*.pt
 
-# Heavy / regenerable training artefacts (keep small docs if any)
-artifacts/checkpoints/
+# Heavy / regenerable training artefacts (keep small docs if any).
+# Ignore every checkpoint entry, then re-include only the production video directory.
+artifacts/checkpoints/*
+!artifacts/checkpoints/video/
 artifacts/experiments/
 artifacts/phase3/benchmark/_infer_scratch/
 artifacts/phase3/sprint4/_infer_scratch/
@@ -96,3 +105,9 @@ artifacts/investigations/*
 test_output*.txt
 test_result.txt
 _diag_*.json
+
+# Local collections and scratch files — do not commit
+.postman/
+postman/
+dataset 16.09/
+_tmp_thumb.jpg

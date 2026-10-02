@@ -13,14 +13,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Blueprint, abort, current_app, send_from_directory
+from flask import Blueprint, current_app, send_from_directory
 
 from backend.app.utils.paths import resolve_within
 
 evidex_bp = Blueprint("evidex", __name__, url_prefix="/evidex")
 
 # Only the three files the frontend actually consists of are servable.
-_ALLOWED_ASSETS = {"index.html", "script.js", "api.js", "styles.css"}
+_ALLOWED_ASSETS = {
+    "index.html",
+    "script.js",
+    "api.js",
+    "styles.css",
+    "video_result.js",
+    "password_policy.js",
+}
 
 
 def _evidex_dir() -> Path:
@@ -29,15 +36,22 @@ def _evidex_dir() -> Path:
 
 @evidex_bp.get("/")
 def evidex_index():
-    return send_from_directory(str(_evidex_dir()), "index.html")
+    return _unstored(send_from_directory(str(_evidex_dir()), "index.html", max_age=0))
+
+
+def _unstored(response):
+    """Keep EVIDEX assets from being reused after a file is added or replaced."""
+
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @evidex_bp.get("/<path:asset>")
 def evidex_asset(asset: str):
-    if asset not in _ALLOWED_ASSETS:
-        abort(404)
     root = _evidex_dir()
-    full = resolve_within(root, asset)
+    full = resolve_within(root, asset) if asset in _ALLOWED_ASSETS else None
     if full is None or not full.is_file():
-        abort(404)
-    return send_from_directory(str(root), full.name)
+        from flask import make_response
+
+        return _unstored(make_response("Not found", 404))
+    return _unstored(send_from_directory(str(root), full.name, max_age=0))

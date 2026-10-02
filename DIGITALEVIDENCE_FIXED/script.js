@@ -9,6 +9,46 @@
    and must be re-implemented server-side for real legal use.
    ========================================================================== */
 
+/* Registration rules. password_policy.js sets the same object when that file
+   loads. This copy runs when that request is missing, so the checklist still
+   updates. */
+if (!window.MayaPassword) {
+  window.MayaPassword = (function () {
+    function checks(password) {
+      const value = String(password || '');
+      return {
+        length: value.length >= 8,
+        uppercase: /[A-Z]/.test(value),
+        lowercase: /[a-z]/.test(value),
+        number: /[0-9]/.test(value),
+        special: /[^A-Za-z0-9]/.test(value),
+      };
+    }
+    function satisfied(result) {
+      return !!(result && result.length && result.uppercase && result.lowercase && result.number && result.special);
+    }
+    function applyChecklist(password, items, button) {
+      const result = checks(password);
+      (items || []).forEach(function (item) {
+        const ok = !!result[item.dataset.rule];
+        item.classList.toggle('met', ok);
+        item.textContent = (ok ? '✓ ' : '☐ ') + (item.dataset.label || '');
+      });
+      if (button) button.disabled = !satisfied(result);
+      return result;
+    }
+    function registrationReady(fields) {
+      const source = fields || {};
+      const username = String(source.username || '').trim();
+      const email = String(source.email || '').trim();
+      const passwordOk = satisfied(checks(source.password));
+      const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+      return passwordOk && username.length >= 3 && emailOk;
+    }
+    return { checks: checks, satisfied: satisfied, applyChecklist: applyChecklist, registrationReady: registrationReady };
+  })();
+}
+
 /* ==========================================================================
    1. ICONS  (inline SVG, stroke-based, consistent 24x24 viewbox)
    ========================================================================== */
@@ -399,13 +439,32 @@ const NAV_ADMIN = [
   ]},
 ];
 
+/* Forensic tools share one evidence id. Sidebar links otherwise drop ?id=
+   and every item opens the same case picker. */
+function withCurrentEvidence(path) {
+  const params = window.__routeParams;
+  if (!params || typeof params.get !== 'function') return path;
+  const id = params.get('id');
+  if (!id) return path;
+  const carry = {
+    '#/analysis': true,
+    '#/xai': true,
+    '#/tampering': true,
+    '#/chain-of-custody': true,
+    '#/integrity': true,
+    '#/face-verification': true,
+  };
+  if (!carry[path]) return path;
+  return path + '?id=' + encodeURIComponent(id);
+}
+
 function sidebarHtml(role, activePath) {
   const nav = role === 'admin' ? NAV_ADMIN : NAV_INVESTIGATOR;
   const auth = getAuth();
   const groups = nav.map(g => `
     <div class="sidebar-section-label">${g.group}</div>
     ${g.items.map(it => `
-      <a href="${it.path}" class="side-link ${activePath===it.path?'active':''}">
+      <a href="${role === 'admin' ? it.path : withCurrentEvidence(it.path)}" class="side-link ${activePath===it.path?'active':''}">
         ${ic(it.icon)} <span>${it.label}</span>
       </a>
     `).join('')}
@@ -712,7 +771,10 @@ function renderLogin() {
         </div>
         <div class="field" id="passwordField">
           <label for="loginPass">Password</label>
-          <input type="password" id="loginPass" autocomplete="current-password" placeholder="Enter password">
+          <div class="password-row">
+            <input type="password" id="loginPass" autocomplete="current-password" placeholder="Enter password">
+            <button type="button" class="btn btn-ghost btn-sm password-toggle" data-toggle-password="loginPass">Show</button>
+          </div>
         </div>
         <button type="submit" class="btn btn-primary btn-block" id="loginSubmitBtn">Sign In as Investigator</button>
       </form>
@@ -740,9 +802,20 @@ function renderLogin() {
         </div>
         <div class="field">
           <label for="regPassword">Password</label>
-          <input type="password" id="regPassword" autocomplete="new-password" placeholder="At least 8 characters">
+          <div class="password-row">
+            <input type="password" id="regPassword" autocomplete="new-password" placeholder="Enter a password">
+            <button type="button" class="btn btn-ghost btn-sm password-toggle" data-toggle-password="regPassword">Show</button>
+          </div>
+          <div class="pw-reqs-title">Password requirements</div>
+          <ul class="pw-reqs" id="regPasswordReqs">
+            <li data-rule="length" data-label="At least 8 characters">☐ At least 8 characters</li>
+            <li data-rule="uppercase" data-label="1 uppercase letter">☐ 1 uppercase letter</li>
+            <li data-rule="lowercase" data-label="1 lowercase letter">☐ 1 lowercase letter</li>
+            <li data-rule="number" data-label="1 number">☐ 1 number</li>
+            <li data-rule="special" data-label="1 special character">☐ 1 special character</li>
+          </ul>
         </div>
-        <button type="submit" class="btn btn-primary btn-block" id="registerSubmitBtn">Register &amp; Sign In</button>
+        <button type="submit" class="btn btn-primary btn-block" id="registerSubmitBtn" disabled>Register &amp; Sign In</button>
       </form>
     </div>
   </div>`;
@@ -772,6 +845,37 @@ function postRenderLogin() {
 
   $$('.role-opt', roleSelect).forEach(btn => btn.addEventListener('click', () => applyRole(btn.dataset.role)));
   applyRole('investigator');
+
+  const regPassword = $('#regPassword');
+  const regButton = $('#registerSubmitBtn');
+  function refreshPasswordRequirements() {
+    if (!window.MayaPassword || !regPassword || !regButton) return;
+    const username = ($('#regUsername') && $('#regUsername').value) || '';
+    const email = ($('#regEmail') && $('#regEmail').value) || '';
+    MayaPassword.applyChecklist(regPassword.value, $$('#regPasswordReqs [data-rule]'), null);
+    regButton.disabled = !MayaPassword.registrationReady({
+      password: regPassword.value,
+      username: username,
+      email: email,
+    });
+  }
+  $$('[data-toggle-password]').forEach(button => {
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.getAttribute('data-toggle-password'));
+      if (!input) return;
+      const visible = input.type === 'text';
+      input.type = visible ? 'password' : 'text';
+      button.textContent = visible ? 'Show' : 'Hide';
+      if (input === regPassword) refreshPasswordRequirements();
+    });
+  });
+  ['regPassword', 'regUsername', 'regEmail'].forEach(id => {
+    const field = document.getElementById(id);
+    if (!field) return;
+    field.addEventListener('input', refreshPasswordRequirements);
+    field.addEventListener('change', refreshPasswordRequirements);
+  });
+  refreshPasswordRequirements();
 
   const errBox = $('#loginError');
   function showLoginError(message) {
@@ -827,6 +931,10 @@ function postRenderLogin() {
       email: $('#regEmail').value.trim(),
       password: $('#regPassword').value,
     };
+    if (!window.MayaPassword || !MayaPassword.satisfied(MayaPassword.checks(payload.password))) {
+      showLoginError('Password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character.');
+      return;
+    }
     errBox.classList.remove('show');
     btn.disabled = true;
     btn.textContent = 'Creating account…';
@@ -840,8 +948,8 @@ function postRenderLogin() {
       if (err instanceof MayaApi.ApiError) showLoginError(err.message);
       else showLoginError('Cannot reach the MAYA backend.');
     } finally {
-      btn.disabled = false;
       btn.textContent = 'Register & Sign In';
+      refreshPasswordRequirements();
     }
   });
 }
@@ -1194,9 +1302,17 @@ function postRenderDashboard() {
 /* ==========================================================================
    12. EVIDENCE UPLOAD (investigator) -> ANALYSIS PROCESSING -> RESULT
    ========================================================================== */
-/* MAYA scopes evidence to a case and only accepts still images, so the upload
-   page gains a case selector and advertises the backend's real file types. */
-const ACCEPTED_UPLOAD_EXTS = ['.jpg', '.jpeg', '.png', '.bmp', '.webp'];
+/* MAYA scopes evidence to a case. The file picker advertises the backend's
+   image and video extensions; the server remains the authority on validation. */
+const ACCEPTED_UPLOAD_EXTS = [
+  '.jpg', '.jpeg', '.png', '.bmp', '.webp',
+  '.mp4', '.avi', '.mov', '.mkv',
+];
+const ACCEPTED_UPLOAD_MIMES = [
+  'image/jpeg', 'image/png', 'image/bmp', 'image/webp',
+  'video/mp4', 'video/x-msvideo', 'video/quicktime', 'video/x-matroska',
+];
+const ACCEPTED_UPLOAD_ACCEPT = [...ACCEPTED_UPLOAD_EXTS, ...ACCEPTED_UPLOAD_MIMES].join(',');
 
 async function renderUpload() {
   const cases = (await MayaApi.cases.list()).map(MayaApi.adapt.case);
@@ -1228,17 +1344,22 @@ async function renderUpload() {
         <div class="dropzone" id="invDropzone" tabindex="0">
           <div class="dz-icon">${ic('upload')}</div>
           <h3>Drag &amp; drop evidence here</h3>
-          <p>or click to browse — still images only</p>
+          <p>or click to browse</p>
+          <p>Images and videos supported</p>
           <div class="type-chips">
             <span class="type-chip">${ic('image')} JPG</span>
             <span class="type-chip">${ic('image')} PNG</span>
             <span class="type-chip">${ic('image')} BMP</span>
             <span class="type-chip">${ic('image')} WEBP</span>
+            <span class="type-chip">${ic('video')} MP4</span>
+            <span class="type-chip">${ic('video')} AVI</span>
+            <span class="type-chip">${ic('video')} MOV</span>
+            <span class="type-chip">${ic('video')} MKV</span>
           </div>
-          <input type="file" id="invFileInput" accept="${ACCEPTED_UPLOAD_EXTS.join(',')},image/*">
+          <input type="file" id="invFileInput" accept="${ACCEPTED_UPLOAD_ACCEPT}">
         </div>
         <p style="color:var(--text-muted);font-size:12.5px;margin:10px 0 0;">
-          The MAYA authenticity model analyses still images. Video, audio and documents are not supported by the backend and are rejected rather than silently accepted.
+          Supported evidence: images (JPG, PNG, BMP, WEBP) and videos (MP4, AVI, MOV, MKV). The server validates each file.
         </p>
         <div id="invFilePreview"></div>
       </div>
@@ -1292,7 +1413,7 @@ function postRenderUpload() {
     const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
     if (!ACCEPTED_UPLOAD_EXTS.includes(ext)) {
       toast('Unsupported file type',
-        `MAYA analyses still images only (${ACCEPTED_UPLOAD_EXTS.join(', ')}).`, 'error', 6000);
+        `Use an image or video (${ACCEPTED_UPLOAD_EXTS.join(', ')}).`, 'error', 6000);
       return;
     }
 
@@ -1359,7 +1480,9 @@ async function loadEvidenceWithAnalysis(evidenceId) {
   } catch (err) {
     if (!(err instanceof MayaApi.ApiError && err.isNotFound)) throw err;
   }
-  const latest = runs.find(r => r.analysis_status === 'COMPLETED') || runs[0] || null;
+  const latest = isVideoEvidence(ev)
+    ? runs.slice().sort((a, b) => (b.analysis_id || 0) - (a.analysis_id || 0))[0] || null
+    : runs.find(r => r.analysis_status === 'COMPLETED') || runs[0] || null;
   MayaApi.adapt.applyAnalysis(ev, latest);
   return { ev, analysis: latest ? MayaApi.adapt.analysis(latest) : null, runs };
 }
@@ -1512,8 +1635,14 @@ async function renderAnalysisPicker() {
    genuinely in flight while it animates. */
 function renderAnalysisProcessing(ev) {
   window.__postRender = () => postRenderAnalysisProcessing(ev);
-  const stepNames = ['Integrity verification (SHA-256)','Model inference (EfficientNet)','Grad-CAM explainability','Persisting investigation artifacts'];
+  const videoPending = isVideoEvidence(ev) && window.MayaVideoResult
+    ? MayaVideoResult.beginNewAnalysis()
+    : '';
+  const stepNames = isVideoEvidence(ev) && window.MayaVideoResult
+    ? MayaVideoResult.videoProgressSteps()
+    : ['Integrity verification (SHA-256)','Model inference (EfficientNet)','Grad-CAM explainability','Persisting investigation artifacts'];
   const inner = `
+    ${videoPending}
     <div class="card" style="max-width:640px;margin:0 auto;">
       <div style="text-align:center;margin-bottom:6px;">
         <div class="fi" style="margin:0 auto 14px;width:52px;height:52px;">${ic('scan')}</div>
@@ -1535,6 +1664,11 @@ function renderAnalysisProcessing(ev) {
    final step when the backend actually answers. Failures surface the real
    error instead of completing the animation. */
 function postRenderAnalysisProcessing(ev) {
+  if (window.__videoTemporalChart) {
+    window.__videoTemporalChart.destroy();
+    window.__videoTemporalChart = null;
+  }
+  window.__xaiExportData = null;
   const rows = $$('#analysisProgressList .progress-step');
   const note = $('#analysisProgressNote');
   let settled = false;
@@ -1569,7 +1703,10 @@ function postRenderAnalysisProcessing(ev) {
   request.then((run) => {
     settled = true;
     rows.forEach(markDone);
-    if (run.analysis_status === 'COMPLETED') {
+    if (run.analysis_status === 'COMPLETED' && run.video_analysis) {
+      const score = window.MayaVideoResult && MayaVideoResult.formatConfidenceScore(run.video_analysis);
+      toast('Analysis complete', `${run.video_analysis.prediction || run.prediction}${score ? ' · Confidence Score ' + score : ''}.`, 'success');
+    } else if (run.analysis_status === 'COMPLETED') {
       toast('Analysis complete', `${run.prediction} at ${Number(run.confidence).toFixed(1)}% confidence.`, 'success');
     } else {
       toast('Analysis finished', `Status: ${run.analysis_status}`, 'info');
@@ -1590,6 +1727,23 @@ function postRenderAnalysisProcessing(ev) {
 
 /* Every value on this page comes from the stored AnalysisRun. */
 function renderAnalysisResult(ev, a) {
+  if (isVideoEvidence(ev) && a.analysisStatus === 'FAILED') {
+    const failure = window.MayaVideoResult
+      ? MayaVideoResult.renderVideoFailure(a.errorMessage)
+      : '<section class="video-analysis" data-video-state="failed"><div class="card"><p class="video-status-error">Analysis failed.</p></div></section>';
+    return appShell('investigator', '#/analysis', 'Analysis Result', failure);
+  }
+  if (a.videoAnalysis && window.MayaVideoResult) {
+    window.__postRender = () => postRenderVideoAnalysis(a);
+    const sha = ev.sha256 ? ev.sha256.slice(0, 16) + '…' : '—';
+    const inner = MayaVideoResult.renderVideoAnalysisSection(a, {
+      analysisId: a.analysisId,
+      artifactUrl: MayaApi.analysis.artifactUrl,
+      evidenceLabel: ev.filename || ('EV-' + ev.backendId),
+      sha256: sha,
+    });
+    return appShell('investigator', '#/analysis', 'Analysis Result', inner);
+  }
   window.__postRender = () => postRenderAnalysisResult(ev, a);
   const tone = a.status === 'Authentic' ? 'green' : a.status === 'Tampered' ? 'red' : 'blue';
   const statusText = {
@@ -1664,11 +1818,54 @@ function renderAnalysisResult(ev, a) {
         </div>
       </div>
     </div>
+    ${isVideoEvidence(ev) && (a.frames || []).length ? videoFrameGalleryHtml(ev, a, defaultVideoFrameNumber(a), { links: true }) : ''}
   `;
   return appShell('investigator', '#/analysis', 'Analysis Result', inner);
 }
 
+function postRenderVideoAnalysis(a) {
+  if (window.__videoTemporalChart) {
+    window.__videoTemporalChart.destroy();
+    window.__videoTemporalChart = null;
+  }
+  const canvas = document.getElementById('videoTemporalChart');
+  const points = window.MayaVideoResult ? MayaVideoResult.temporalPoints(a.videoAnalysis) : [];
+  if (canvas && points.length && window.Chart) {
+    window.__videoTemporalChart = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: points.map((point) => String(point.frameIndex)),
+        datasets: [{
+          label: 'Relative temporal contribution',
+          data: points.map((point) => point.contribution),
+          backgroundColor: points.map((point) => point.fallback ? '#f5a623' : '#29e0d6'),
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: '#8ca0b3' } } },
+        scales: {
+          x: { ticks: { color: '#8ca0b3' }, title: { display: true, text: 'Frame index', color: '#8ca0b3' } },
+          y: { ticks: { color: '#8ca0b3' }, title: { display: true, text: 'Relative contribution', color: '#8ca0b3' }, beginAtZero: true },
+        },
+      },
+    });
+  }
+  document.querySelectorAll('img.video-gradcam, img.video-contact-sheet').forEach((img) => {
+    img.addEventListener('error', () => {
+      const note = document.createElement('p');
+      note.className = 'video-missing-artifact';
+      note.textContent = 'Grad-CAM artifact is not available.';
+      img.replaceWith(note);
+    });
+  });
+}
+
 function postRenderAnalysisResult(ev, a) {
+  if (window.__videoTemporalChart) {
+    window.__videoTemporalChart.destroy();
+    window.__videoTemporalChart = null;
+  }
   const fg = $('.score-ring .fg');
   if (!fg) return;
   const pct = typeof a.confidence === 'number' ? a.confidence : 0;
@@ -1724,6 +1921,23 @@ async function renderXAI() {
         <a href="#/analysis?id=${escapeHtml(String(id))}" class="btn btn-primary btn-sm" style="margin-top:12px;">Run analysis</a>
         <a href="#/xai" class="btn btn-ghost btn-sm" style="margin-top:12px;">Back to case picker</a>
       </div>`);
+  }
+  if (a.videoAnalysis && window.MayaVideoResult) {
+    window.__postRender = () => {
+      postRenderVideoAnalysis(a);
+      postRenderExpanders();
+    };
+    window.__xaiExportData = { ev, a };
+    const inner = `
+      <div class="breadcrumb"><a href="#/analysis?id=${ev.backendId}">Analysis</a> ${ic('chevronRight')} <span>XAI Insights</span></div>
+      <div class="page-sub" style="margin-top:-8px;">Evidence ID: <span class="mono">EV-${ev.backendId}</span> — ${escapeHtml(ev.filename)}</div>
+      ${MayaVideoResult.renderVideoExplainability(a, {
+        analysisId: a.analysisId,
+        artifactUrl: MayaApi.analysis.artifactUrl,
+      })}
+      <button class="btn btn-primary" id="downloadXaiBtn">${ic('download')} Download XAI Summary</button>
+    `;
+    return appShell('investigator', '#/xai', 'XAI Insights', inner);
   }
   window.__postRender = postRenderExpanders;
 
@@ -2051,9 +2265,11 @@ function postRenderExpanders() {
       '--------',
       `Investigation ID: ${a.investigationId || '—'}`,
       `Analysis ID: ${a.analysisId}`,
-      `Prediction: ${a.prediction || '—'}`,
-      `Model confidence: ${typeof a.confidence === 'number' ? a.confidence.toFixed(2) + '%' : 'not reported'}`,
-      `Model: ${a.modelName || '—'} (${a.modelVersion || '—'})`,
+      `Prediction: ${(a.videoAnalysis && a.videoAnalysis.prediction) || a.prediction || '—'}`,
+      a.videoAnalysis
+        ? `Confidence Score: ${(window.MayaVideoResult && MayaVideoResult.formatConfidenceScore(a.videoAnalysis)) || 'not reported'}`
+        : `Model confidence: ${typeof a.confidence === 'number' ? a.confidence.toFixed(2) + '%' : 'not reported'}`,
+      `Model: ${(a.videoAnalysis && a.videoAnalysis.modelName) || a.modelName || '—'} (${(a.videoAnalysis && a.videoAnalysis.modelVersion) || a.modelVersion || '—'})`,
       `Dataset version: ${a.datasetVersion || '—'}`,
       `Trust score: ${a.trustScore ?? 'not computed'}`,
       `Quality score: ${a.qualityScore ?? 'not computed'}`,
@@ -2061,9 +2277,13 @@ function postRenderExpanders() {
       '',
       'EXPLAINABILITY',
       '--------------',
-      a.explanation && (a.explanation.heatmap || a.explanation.overlay)
-        ? `Grad-CAM artifact produced by "${a.explanation.explainer || 'gradcam'}".`
-        : 'No Grad-CAM artifact was produced for this analysis.',
+      a.videoAnalysis
+        ? ((a.videoAnalysis.xaiAvailable === true && (a.videoAnalysis.gradcamContactSheet || (a.videoAnalysis.gradcamFrameIndices || []).length))
+          ? 'Grad-CAM artifact available for this video analysis.'
+          : 'Grad-CAM artifact is not available for this analysis.')
+        : (a.explanation && (a.explanation.heatmap || a.explanation.overlay)
+          ? `Grad-CAM artifact produced by "${a.explanation.explainer || 'gradcam'}".`
+          : 'No Grad-CAM artifact was produced for this analysis.'),
       a.advancedXai ? `Advanced XAI recorded: ${JSON.stringify(a.advancedXai)}` : 'Advanced XAI: not requested.',
       '',
       'NOT AVAILABLE',
@@ -2078,6 +2298,109 @@ function postRenderExpanders() {
     downloadTextFile(`XAI_Summary_EV-${ev.backendId}.txt`, txt);
     toast('Download started', `XAI_Summary_EV-${ev.backendId}.txt`, 'success');
   });
+}
+
+function isVideoEvidence(ev) {
+  return ev.type === 'Video'
+    || ev.mediaType === 'video'
+    || String(ev.mimeType || '').toLowerCase().startsWith('video/');
+}
+
+function explainedFrameNumbers(a) {
+  const expl = a.explanation || {};
+  const nums = [];
+  const push = (n) => {
+    const v = Number(n);
+    if (Number.isInteger(v) && !nums.includes(v)) nums.push(v);
+  };
+  push(expl.frameNumber);
+  (expl.explainedFrames || []).forEach(push);
+  const heat = expl.heatmap || '';
+  const match = String(heat).match(/frame_(\d+)/i);
+  if (match) push(parseInt(match[1], 10));
+  return nums;
+}
+
+function defaultVideoFrameNumber(a) {
+  const expl = a.explanation || {};
+  const primary = expl.frameNumber;
+  if (primary !== null && primary !== undefined && Number.isInteger(Number(primary))) {
+    return Number(primary);
+  }
+  const explained = explainedFrameNumbers(a);
+  if (explained.length) return explained[0];
+  const frames = a.frames || [];
+  if (frames.length && Number.isInteger(Number(frames[0].frameNumber))) {
+    return Number(frames[0].frameNumber);
+  }
+  return null;
+}
+
+function formatFrameTime(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return '—';
+  return seconds.toFixed(1) + 's';
+}
+
+function frameConfidenceLabel(frame) {
+  if (!frame || typeof frame.confidence !== 'number') return '—';
+  return frame.confidence.toFixed(1) + '%';
+}
+
+function videoOriginalUrl(ev, a, frameNumber) {
+  if (isVideoEvidence(ev)) {
+    if (frameNumber !== null && frameNumber !== undefined && frameNumber !== '') {
+      return MayaApi.evidence.frameUrl(ev.backendId, frameNumber);
+    }
+    return MayaApi.analysis.artifactUrl(a.analysisId, 'original');
+  }
+  return MayaApi.evidence.fileUrl(ev.backendId);
+}
+
+function videoFrameGalleryHtml(ev, a, selectedFrame, opts) {
+  const frames = a.frames || [];
+  if (!frames.length) return '';
+  const xai = new Set(explainedFrameNumbers(a));
+  const links = !!(opts && opts.links);
+  const tiles = frames.map((frame) => {
+    const n = frame.frameNumber;
+    const pred = frame.prediction || '—';
+    const fake = pred === 'FAKE';
+    const hasXai = xai.has(Number(n));
+    const selected = Number(selectedFrame) === Number(n);
+    const classes = [
+      'frame-tile',
+      fake ? 'is-fake' : '',
+      hasXai ? 'has-xai' : '',
+      selected ? 'selected' : '',
+    ].filter(Boolean).join(' ');
+    const inner = `
+      <img src="${MayaApi.evidence.frameUrl(ev.backendId, n)}" alt="Frame ${n}" loading="lazy">
+      <div class="ft-top">
+        <span class="ft-frame">Frame ${n}</span>
+        <span class="ft-badges">
+          ${hasXai ? '<span class="ft-badge xai">XAI</span>' : ''}
+          ${fake ? '<span class="ft-badge fake">FAKE</span>' : ''}
+        </span>
+      </div>
+      <div class="ft-meta">
+        <span>${formatFrameTime(frame.timestampSeconds)}</span>
+        <span>${escapeHtml(pred)} · ${frameConfidenceLabel(frame)}</span>
+      </div>`;
+    if (links) {
+      return `<a class="${classes}" href="#/tampering?id=${ev.backendId}&frame=${n}">${inner}</a>`;
+    }
+    return `<button type="button" class="${classes}" data-frame="${n}">${inner}</button>`;
+  }).join('');
+  return `
+    <div class="card frame-gallery-card">
+      <div class="panel-title"><h3>Analyzed frames</h3>
+        <span class="sub">${frames.length} sampled · Grad-CAM on ${xai.size} frame${xai.size === 1 ? '' : 's'}</span>
+      </div>
+      <p class="page-sub" style="margin:0 0 12px;">
+        Every sampled frame is listed. Grad-CAM is only produced for up to 3 selected frames; other tiles show the JPEG and prediction only.
+      </p>
+      <div class="frame-gallery">${tiles}</div>
+    </div>`;
 }
 
 /* ==========================================================================
@@ -2109,50 +2432,88 @@ async function renderTampering() {
         <a href="#/tampering" class="btn btn-ghost btn-sm" style="margin-top:12px;">Back to case picker</a>
       </div>`);
   }
-  window.__postRender = postRenderTampering;
+  if (a.videoAnalysis && window.MayaVideoResult) {
+    const requestedFrame = params.get('frame');
+    window.__postRender = () => {
+      postRenderVideoAnalysis(a);
+      MayaVideoResult.bindTamperingMap(document);
+    };
+    const inner = `
+      <div class="breadcrumb"><a href="#/analysis?id=${ev.backendId}">Analysis</a> ${ic('chevronRight')} <span>Tampering Map</span></div>
+      <div class="page-sub" style="margin-top:-8px;">Evidence ID: <span class="mono">EV-${ev.backendId}</span> — ${escapeHtml(ev.filename)}</div>
+      ${MayaVideoResult.renderVideoAttentionMap(a, {
+        analysisId: a.analysisId,
+        artifactUrl: MayaApi.analysis.artifactUrl,
+        selectedFrame: requestedFrame,
+      })}
+    `;
+    return appShell('investigator', '#/tampering', 'Tampering Map', inner);
+  }
+  const requestedFrame = params.get('frame');
+  const selectedFrame = isVideoEvidence(ev)
+    ? (requestedFrame !== null && requestedFrame !== '' && Number.isInteger(Number(requestedFrame))
+      ? Number(requestedFrame)
+      : defaultVideoFrameNumber(a))
+    : null;
+  window.__postRender = () => postRenderTampering(ev, a, selectedFrame);
 
   const confidence = typeof a.confidence === 'number' ? a.confidence : null;
-  const hasHeatmap = !!(a.explanation && a.explanation.heatmap);
-  const hasOverlay = !!(a.explanation && a.explanation.overlay);
-  const originalUrl = MayaApi.evidence.fileUrl(ev.backendId);
+  const xaiFrames = new Set(explainedFrameNumbers(a));
+  const frameHasXai = selectedFrame === null
+    ? !!(a.explanation && (a.explanation.heatmap || a.explanation.overlay))
+    : xaiFrames.has(Number(selectedFrame));
+  const hasHeatmap = frameHasXai && !!(a.explanation && a.explanation.heatmap);
+  const hasOverlay = frameHasXai && !!(a.explanation && a.explanation.overlay);
+  const originalUrl = videoOriginalUrl(ev, a, selectedFrame);
+  const heatmapUrl = hasHeatmap
+    ? MayaApi.analysis.artifactUrl(a.analysisId, 'heatmap', isVideoEvidence(ev) ? selectedFrame : undefined)
+    : '';
+  const overlayUrl = hasOverlay
+    ? MayaApi.analysis.artifactUrl(a.analysisId, 'overlay', isVideoEvidence(ev) ? selectedFrame : undefined)
+    : '';
+  const selectedMeta = (a.frames || []).find((f) => Number(f.frameNumber) === Number(selectedFrame));
 
   /* All three views share one fixed-size stage; object-fit:contain keeps the
      real aspect ratio without stretching or cropping. */
-  const imgTag = (src, alt) => `<img src="${src}" alt="${alt}" class="viewer-img"
+  const imgTag = (src, alt, elId) => `<img id="${elId}" src="${src}" alt="${alt}" class="viewer-img"
       onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'Image could not be loaded from the backend.',className:'viewer-msg'}))">`;
 
   const inner = `
     <div class="breadcrumb"><a href="#/analysis?id=${ev.backendId}">Analysis</a> ${ic('chevronRight')} <span>Attention Heat Map</span></div>
     <div class="page-sub" style="margin-top:-8px;">Evidence ID: <span class="mono">EV-${ev.backendId}</span> — ${escapeHtml(ev.filename)}</div>
 
+    ${isVideoEvidence(ev) ? videoFrameGalleryHtml(ev, a, selectedFrame, { links: false }) : ''}
+
     <div class="card">
       <div class="heatmap-tabs">
         <button class="heatmap-tab active" data-mode="original">ORIGINAL</button>
-        <button class="heatmap-tab" data-mode="heatmap" ${hasHeatmap ? '' : 'disabled title="No heatmap artifact"'}>HEAT MAP</button>
-        <button class="heatmap-tab" data-mode="overlay" ${hasOverlay ? '' : 'disabled title="No overlay artifact"'}>OVERLAY</button>
+        <button class="heatmap-tab" data-mode="heatmap" ${hasHeatmap ? '' : 'disabled title="No heatmap artifact for this frame"'}>HEAT MAP</button>
+        <button class="heatmap-tab" data-mode="overlay" ${hasOverlay ? '' : 'disabled title="No overlay artifact for this frame"'}>OVERLAY</button>
       </div>
       <div class="viewer-stage" id="heatStage">
         <div class="viewer-pane" data-pane="original">
-          ${imgTag(originalUrl, 'Original evidence image')}
-          <span class="viewer-label">Original</span>
+          ${imgTag(originalUrl, isVideoEvidence(ev) ? 'Selected video frame' : 'Original evidence image', 'heatOriginal')}
+          <span class="viewer-label" id="heatOriginalLabel">${isVideoEvidence(ev) && selectedFrame !== null ? `Frame ${selectedFrame}` : 'Original'}</span>
         </div>
         <div class="viewer-pane" data-pane="heatmap" hidden>
           ${hasHeatmap
-            ? imgTag(MayaApi.analysis.artifactUrl(a.analysisId, 'heatmap'), 'Grad-CAM heat map')
-            : `<p class="viewer-msg">No heat map artifact was produced for this analysis.</p>`}
+            ? imgTag(heatmapUrl, 'Grad-CAM heat map', 'heatMap')
+            : `<p class="viewer-msg">No heat map artifact is available for this frame.</p>`}
           <span class="viewer-label">Heat map</span>
         </div>
         <div class="viewer-pane" data-pane="overlay" hidden>
           ${hasOverlay
-            ? imgTag(MayaApi.analysis.artifactUrl(a.analysisId, 'overlay'), 'Grad-CAM overlay')
-            : `<p class="viewer-msg">No overlay artifact was produced for this analysis.</p>`}
+            ? imgTag(overlayUrl, 'Grad-CAM overlay', 'heatOverlay')
+            : `<p class="viewer-msg">No overlay artifact is available for this frame.</p>`}
           <span class="viewer-label">Overlay</span>
         </div>
       </div>
 
       <div class="kv-grid" style="margin-top:20px;">
-        <div class="kv-item"><div class="kl">Prediction</div><div class="kv-val">${escapeHtml(a.prediction || '—')}</div></div>
-        <div class="kv-item"><div class="kl">Model confidence</div><div class="kv-val">${confidence !== null ? confidence.toFixed(1) + '%' : '—'}</div></div>
+        <div class="kv-item"><div class="kl">${isVideoEvidence(ev) ? 'Video prediction' : 'Prediction'}</div><div class="kv-val">${escapeHtml(a.prediction || '—')}</div></div>
+        <div class="kv-item"><div class="kl">${isVideoEvidence(ev) ? 'Video confidence' : 'Model confidence'}</div><div class="kv-val">${confidence !== null ? confidence.toFixed(1) + '%' : '—'}</div></div>
+        <div class="kv-item"><div class="kl">Frame prediction</div><div class="kv-val" id="heatFramePred">${escapeHtml((selectedMeta && selectedMeta.prediction) || (isVideoEvidence(ev) ? '—' : (a.prediction || '—')))}</div></div>
+        <div class="kv-item"><div class="kl">Frame confidence</div><div class="kv-val" id="heatFrameConf">${selectedMeta ? frameConfidenceLabel(selectedMeta) : (confidence !== null && !isVideoEvidence(ev) ? confidence.toFixed(1) + '%' : '—')}</div></div>
         <div class="kv-item"><div class="kl">Explainer</div><div class="kv-val">${escapeHtml((a.explanation && a.explanation.explainer) || 'none')}</div></div>
         <div class="kv-item"><div class="kl">Model</div><div class="kv-val">${escapeHtml(a.modelName || '—')}</div></div>
       </div>
@@ -2171,17 +2532,88 @@ async function renderTampering() {
   return appShell('investigator', '#/tampering', 'Attention Heat Map', inner);
 }
 
-/* Tab switching between the three real images. */
-function postRenderTampering() {
-  $$('.heatmap-tab').forEach(tab => tab.addEventListener('click', () => {
+function ensureViewerImage(pane, id, src, alt) {
+  let img = document.getElementById(id);
+  if (!img || img.tagName !== 'IMG') {
+    pane.querySelectorAll('.viewer-msg').forEach((el) => el.remove());
+    img = document.createElement('img');
+    img.id = id;
+    img.className = 'viewer-img';
+    img.alt = alt;
+    img.onerror = function () {
+      this.replaceWith(Object.assign(document.createElement('p'), {
+        textContent: 'Image could not be loaded from the backend.',
+        className: 'viewer-msg',
+      }));
+    };
+    pane.insertBefore(img, pane.firstChild);
+  }
+  img.src = src;
+}
+
+function showHeatMode(mode) {
+  $$('.heatmap-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
+  $$('#heatStage [data-pane]').forEach((pane) => {
+    pane.hidden = pane.dataset.pane !== mode;
+  });
+}
+
+function applyTamperingFrame(ev, a, frameNumber) {
+  const xai = new Set(explainedFrameNumbers(a));
+  const hasXai = xai.has(Number(frameNumber));
+  const origPane = document.querySelector('#heatStage [data-pane="original"]');
+  const heatPane = document.querySelector('#heatStage [data-pane="heatmap"]');
+  const overPane = document.querySelector('#heatStage [data-pane="overlay"]');
+  if (origPane) {
+    ensureViewerImage(origPane, 'heatOriginal', MayaApi.evidence.frameUrl(ev.backendId, frameNumber), 'Selected video frame');
+  }
+  const label = document.getElementById('heatOriginalLabel');
+  if (label) label.textContent = `Frame ${frameNumber}`;
+  const heatTab = document.querySelector('.heatmap-tab[data-mode="heatmap"]');
+  const overTab = document.querySelector('.heatmap-tab[data-mode="overlay"]');
+  if (hasXai && a.explanation && a.explanation.heatmap) {
+    heatTab.removeAttribute('disabled');
+    heatTab.removeAttribute('title');
+    if (heatPane) {
+      ensureViewerImage(heatPane, 'heatMap', MayaApi.analysis.artifactUrl(a.analysisId, 'heatmap', frameNumber), 'Grad-CAM heat map');
+    }
+  } else if (heatTab) {
+    heatTab.setAttribute('disabled', 'disabled');
+    heatTab.title = 'No heatmap artifact for this frame';
+  }
+  if (hasXai && a.explanation && a.explanation.overlay) {
+    overTab.removeAttribute('disabled');
+    overTab.removeAttribute('title');
+    if (overPane) {
+      ensureViewerImage(overPane, 'heatOverlay', MayaApi.analysis.artifactUrl(a.analysisId, 'overlay', frameNumber), 'Grad-CAM overlay');
+    }
+  } else if (overTab) {
+    overTab.setAttribute('disabled', 'disabled');
+    overTab.title = 'No overlay artifact for this frame';
+  }
+  const frame = (a.frames || []).find((f) => Number(f.frameNumber) === Number(frameNumber));
+  const predEl = document.getElementById('heatFramePred');
+  const confEl = document.getElementById('heatFrameConf');
+  if (predEl) predEl.textContent = (frame && frame.prediction) || '—';
+  if (confEl) confEl.textContent = frame ? frameConfidenceLabel(frame) : '—';
+  $$('.frame-tile').forEach((tile) => {
+    tile.classList.toggle('selected', Number(tile.getAttribute('data-frame')) === Number(frameNumber));
+  });
+  const active = document.querySelector('.heatmap-tab.active');
+  if (active && active.hasAttribute('disabled')) showHeatMode('original');
+}
+
+function postRenderTampering(ev, a) {
+  $$('.heatmap-tab').forEach((tab) => tab.addEventListener('click', () => {
     if (tab.hasAttribute('disabled')) return;
-    $$('.heatmap-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    const mode = tab.dataset.mode;
-    $$('#heatStage [data-pane]').forEach(pane => {
-      pane.hidden = pane.dataset.pane !== mode;
-    });
+    showHeatMode(tab.dataset.mode);
   }));
+  if (!isVideoEvidence(ev)) return;
+  $$('.frame-tile[data-frame]').forEach((tile) => {
+    tile.addEventListener('click', () => {
+      applyTamperingFrame(ev, a, Number(tile.getAttribute('data-frame')));
+    });
+  });
 }
 
 /* ==========================================================================
@@ -2681,6 +3113,9 @@ async function renderLegalAdmissibility() {
   const verifyEvents = events.filter(e => e.eventType === 'EVIDENCE_VERIFIED');
   const lastVerify = verifyEvents[verifyEvents.length - 1];
   const integrityVerified = lastVerify ? lastVerify.details.match !== false : null;
+  const videoReadiness = completed && completed.video_analysis && window.MayaVideoResult
+    ? MayaVideoResult.evidenceReadiness(completed)
+    : null;
 
   const checks = [
     { label: 'Evidence stored in MAYA', ok: true, note: `Evidence EV-${ev.backendId}, uploaded ${fmtDate(ev.timestamp)}` },
@@ -2692,9 +3127,16 @@ async function renderLegalAdmissibility() {
     { label: 'Linked to a case', ok: !!custody.case_number, note: `${custody.case_number || '—'} — ${custody.case_title || '—'}` },
     { label: 'Audit trail present', ok: events.length > 0, note: `${events.length} recorded event(s)` },
     { label: 'Authenticity analysis completed', ok: !!completed,
-      note: completed ? `${completed.prediction} at ${Number(completed.confidence).toFixed(1)}% confidence (${completed.model_name} ${completed.model_version})` : 'No completed analysis' },
-    { label: 'Explainability artifact produced', ok: !!(completed && completed.explanation && (completed.explanation.heatmap || completed.explanation.overlay)),
-      note: completed && completed.explanation && completed.explanation.heatmap ? `Grad-CAM (${completed.explanation.explainer})` : 'No Grad-CAM artifact' },
+      note: videoReadiness
+        ? videoReadiness.analysisNote
+        : (completed ? `${completed.prediction} at ${Number(completed.confidence).toFixed(1)}% confidence (${completed.model_name} ${completed.model_version})` : 'No completed analysis') },
+    { label: 'Explainability artifact produced',
+      ok: videoReadiness
+        ? videoReadiness.explainabilityOk
+        : !!(completed && completed.explanation && (completed.explanation.heatmap || completed.explanation.overlay)),
+      note: videoReadiness
+        ? videoReadiness.explainabilityNote
+        : (completed && completed.explanation && completed.explanation.heatmap ? `Grad-CAM (${completed.explanation.explainer})` : 'No Grad-CAM artifact') },
     { label: 'Forensic report generated', ok: reports.length > 0,
       note: reports.length ? `${reports[0].report_number} (${fmtDate(reports[0].generated_at)})` : 'No report generated yet' },
   ];
@@ -3308,6 +3750,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
    ========================================================================== */
 
 async function handleGenerateReport(el) {
+  if (el.disabled) return;
   const analysisId = el.dataset.analysis;
   if (!analysisId || analysisId === 'null') {
     toast('No analysis', 'A completed analysis is required before generating a report.', 'error');
@@ -3319,12 +3762,15 @@ async function handleGenerateReport(el) {
   try {
     const report = await MayaApi.analysis.generateReport(analysisId);
     const r = MayaApi.adapt.report(report);
-    toast('Report generated', `${r.reportNumber} (${fmtBytes(r.sizeBytes || 0)})`, 'success', 5000);
+    const emailNote = r.emailMessage || 'Report generated.';
+    toast(r.emailStatus === 'sent' ? 'Report emailed' : 'Report generated', emailNote, r.emailStatus === 'sent' ? 'success' : 'info', 6000);
     openModal(`
       <h3>${ic('reports')} Report ready</h3>
       <p style="color:var(--text-muted);font-size:13.5px;margin-top:8px;">
         ${escapeHtml(r.reportNumber)} — ${escapeHtml((r.format || 'pdf').toUpperCase())}, ${fmtBytes(r.sizeBytes || 0)}
       </p>
+      <p style="color:var(--text-muted);font-size:13.5px;margin-top:8px;">${escapeHtml(emailNote)}</p>
+      ${r.emailStatus === 'sent' && r.maskedRecipient ? `<p style="font-size:13px;margin-top:4px;">Sent to ${escapeHtml(r.maskedRecipient)}</p>` : ''}
       <div class="hash-box" style="margin-top:10px;"><span>${escapeHtml(r.sha256 || '')}</span></div>
       <div class="modal-actions">
         <button class="btn btn-primary btn-sm" data-action="download-report" data-report="${r.reportId}" data-number="${escapeHtml(r.reportNumber)}">${ic('download')} Download PDF</button>
