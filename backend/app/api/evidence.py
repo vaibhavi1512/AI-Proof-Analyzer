@@ -28,6 +28,16 @@ def upload_evidence(case_id: int):
     return api_success(evidence_to_dict(evidence), status=201)
 
 
+@evidence_bp.post("/compare-integrity")
+@login_required_api
+def compare_integrity():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValidationError("A JSON object with evidence_ids is required")
+    result = evidence_service.compare_integrity(current_user, payload.get("evidence_ids"))
+    return api_success(result)
+
+
 @evidence_bp.get("/cases/<int:case_id>")
 @login_required_api
 def list_evidence(case_id: int):

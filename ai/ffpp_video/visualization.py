@@ -115,6 +115,51 @@ def save_frame_gradcam(path: Path, frame_chw: np.ndarray, heatmap: np.ndarray) -
         raise XaiError(f"Could not write {path.name}.")
 
 
+def map_heatmap_to_source(
+    source_bgr: np.ndarray,
+    heatmap: np.ndarray,
+    input_rect_xywh: tuple[int, int, int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map a model-space CAM into its exact source region and make an overlay.
+
+    The returned normalized CAM and RGB overlay retain the decoded frame's
+    dimensions. Pixels outside a face crop remain unchanged in the overlay.
+    """
+    if source_bgr.ndim != 3 or source_bgr.shape[2] != 3:
+        raise XaiError("Expected a three-channel source frame.")
+    height, width = source_bgr.shape[:2]
+    x, y, crop_w, crop_h = (int(value) for value in input_rect_xywh)
+    if x < 0 or y < 0 or crop_w <= 0 or crop_h <= 0 or x + crop_w > width or y + crop_h > height:
+        raise XaiError("Model input region is outside the source frame.")
+    resized = cv2.resize(np.asarray(heatmap, dtype=np.float32), (crop_w, crop_h), interpolation=cv2.INTER_LINEAR)
+    full = np.zeros((height, width), dtype=np.float32)
+    full[y:y + crop_h, x:x + crop_w] = np.clip(resized, 0.0, 1.0)
+    source_rgb = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2RGB)
+    overlay = source_rgb.copy()
+    overlay[y:y + crop_h, x:x + crop_w] = overlay_heatmap(source_rgb[y:y + crop_h, x:x + crop_w], full[y:y + crop_h, x:x + crop_w])
+    return full, overlay
+
+
+def save_full_frame_gradcam(
+    heatmap_path: Path,
+    overlay_path: Path,
+    source_bgr: np.ndarray,
+    heatmap: np.ndarray,
+    input_rect_xywh: tuple[int, int, int, int],
+) -> None:
+    """Save a source-sized colored heatmap and source-aligned overlay."""
+    full, overlay = map_heatmap_to_source(source_bgr, heatmap, input_rect_xywh)
+    color = cv2.cvtColor(
+        cv2.applyColorMap(np.clip(full * 255.0, 0, 255).astype(np.uint8), cv2.COLORMAP_JET),
+        cv2.COLOR_BGR2RGB,
+    )
+    heatmap_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(heatmap_path), cv2.cvtColor(color, cv2.COLOR_RGB2BGR)):
+        raise XaiError(f"Could not write {heatmap_path.name}.")
+    if not cv2.imwrite(str(overlay_path), cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)):
+        raise XaiError(f"Could not write {overlay_path.name}.")
+
+
 def save_contact_sheet(path: Path, model_inputs: np.ndarray, heatmaps: torch.Tensor, frames: list[dict]) -> None:
     """Show model inputs and overlays for representative frames, in time order."""
     flags = [bool(frame["used_full_frame_fallback"]) for frame in frames]

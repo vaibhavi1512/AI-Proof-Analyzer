@@ -18,6 +18,7 @@ from ai.ffpp_video.constants import IMAGE_SIZE, NUM_FRAMES
 from ai.ffpp_video.exceptions import InsufficientFramesError, VideoOpenError
 from ai.ffpp_video.face_detector import DetectedFace, HaarFaceDetector
 from ai.ffpp_video.face_preprocess import process_sampled_video
+from ai.ffpp_video.visualization import map_heatmap_to_source
 from ai.ffpp_video.sampling import SampledFrame, SampledVideo, uniform_frame_indices
 from tests.conftest_product import register_and_login
 from tests.ffpp_video_fakes import lstm_result
@@ -94,6 +95,28 @@ def test_uniform_sample_keeps_sixteen_frames_in_order() -> None:
     assert len(set(indices)) == NUM_FRAMES
     assert indices[0] == 0
     assert indices[-1] == 239
+
+
+def test_video_cam_mapping_preserves_source_frame_and_crop_bounds() -> None:
+    source = np.full((40, 80, 3), (20, 40, 60), dtype=np.uint8)
+    cam = np.ones((224, 224), dtype=np.float32)
+    mapped, overlay = map_heatmap_to_source(source, cam, (10, 8, 30, 20))
+    assert mapped.shape == (40, 80)
+    assert overlay.shape == (40, 80, 3)
+    assert np.all(mapped[8:28, 10:40] == 1)
+    assert np.all(mapped[:8] == 0)
+    source_rgb = source[:, :, ::-1]
+    assert np.array_equal(overlay[:8], source_rgb[:8])
+    assert not np.array_equal(overlay[8:28, 10:40], source_rgb[8:28, 10:40])
+
+
+def test_video_cam_fallback_mapping_uses_entire_source_aspect() -> None:
+    source = np.zeros((32, 64, 3), dtype=np.uint8)
+    cam = np.ones((224, 224), dtype=np.float32)
+    mapped, overlay = map_heatmap_to_source(source, cam, (0, 0, 64, 32))
+    assert mapped.shape == (32, 64)
+    assert overlay.shape == source.shape
+    assert np.all(mapped == 1)
 
 
 def test_face_crop_keeps_order_and_shape() -> None:

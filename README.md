@@ -653,3 +653,7 @@ Also: [`docs/API.md`](docs/API.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · 
 ## License / use
 
 Intended for academic and authorized investigative training. This is not a consumer public scanner, and a model output is not a legal determination.
+How to open
+.\.venv\Scripts\Activate.ps1
+python backend\run.py
+http://127.0.0.1:5000/evidex/

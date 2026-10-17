@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -25,9 +26,9 @@ from ai.explainability.explanation import (
     write_explanation_report,
 )
 from ai.explainability.gradcam import GradCAM, compute_gradcam_map
-from ai.explainability.heatmap import normalize_heatmap, prepare_heatmap
+from ai.explainability.heatmap import normalize_heatmap, prepare_heatmap, upsample_heatmap
 from ai.explainability.hooks import ActivationGradientHooks
-from ai.explainability.overlay import overlay_heatmap
+from ai.explainability.overlay import apply_colormap, overlay_heatmap
 from ai.explainability.registry import ExplainerRegistry, register_default_explainers
 from ai.explainability.target_layer import (
     TargetLayerResolver,
@@ -259,6 +260,62 @@ def test_engine_end_to_end(
     assert (artifact_dir / "explanation.json").exists()
     assert (artifact_dir / "explanation_report.md").exists()
     assert (artifact_dir / "pipeline_summary.md").exists()
+    expected_size = Image.open(sample_image).size
+    for artifact in ("original.png", "heatmap.png", "overlay.png"):
+        with Image.open(artifact_dir / artifact) as image:
+            assert image.size == expected_size
+
+
+def test_engine_preserves_portrait_coordinates(
+    tmp_path: Path, xai_config: ExplainabilityConfig
+) -> None:
+    evidence = tmp_path / "portrait.png"
+    Image.new("RGB", (90, 170), color=(30, 80, 120)).save(evidence)
+    out_dir = tmp_path / "portrait-xai"
+
+    ExplainabilityEngine(xai_config).explain(evidence, artifact_dir=out_dir)
+
+    for artifact in ("original.png", "heatmap.png", "overlay.png"):
+        with Image.open(out_dir / artifact) as image:
+            assert image.size == (90, 170)
+
+
+def test_selected_imd2020_example_keeps_prediction_and_full_image_cam(
+    tmp_path: Path,
+) -> None:
+    example_dir = ROOT / "artifacts" / "MAYA_GradCAM_Best_Examples" / "FAKE_TOP_25" / "01"
+    evidence = example_dir / "fake_image.png"
+    expected = json.loads((example_dir / "metrics.json").read_text(encoding="utf-8"))
+    cfg = ExplainabilityConfig(
+        project_root=ROOT,
+        checkpoint_path=ROOT / "artifacts" / "checkpoints" / "processed_final" / "best.pt",
+        artifact_dir=tmp_path / "selected-example",
+        id_state_path=tmp_path / "selected-example" / "unused-id-state.json",
+        device_preference="cpu",
+    )
+
+    result = ExplainabilityEngine(cfg).explain(evidence, artifact_dir=cfg.artifact_dir)
+
+    with Image.open(evidence) as source:
+        assert source.size == (1600, 1067)
+        expected_size = source.size
+    assert result.prediction == expected["prediction"]
+    assert result.confidence == pytest.approx(expected["confidence"], abs=0.001)
+    selected_csv = (
+        ROOT / "artifacts" / "MAYA_GradCAM_Best_Examples" / "reports" / "selected_fake.csv"
+    )
+    with selected_csv.open(newline="", encoding="utf-8-sig") as handle:
+        selected_row = next(
+            row for row in csv.DictReader(handle)
+            if Path(row["export_folder"]) == example_dir
+        )
+    evaluator_map = np.load(selected_row["heatmap_npy"])
+    expected_full_map = upsample_heatmap(evaluator_map, (expected_size[1], expected_size[0]))
+    with Image.open(Path(cfg.artifact_dir) / "heatmap.png") as image:
+        np.testing.assert_array_equal(np.asarray(image), apply_colormap(expected_full_map))
+    for artifact in ("original.png", "heatmap.png", "overlay.png"):
+        with Image.open(Path(cfg.artifact_dir) / artifact) as image:
+            assert image.size == expected_size
 
 
 def test_memory_cleanup_after_gradcam(

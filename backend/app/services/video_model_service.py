@@ -19,6 +19,9 @@ _PUBLIC_FRAME_KEYS = (
     "face_detected",
     "used_face_crop",
     "used_full_frame_fallback",
+    "source_frame_width",
+    "source_frame_height",
+    "model_input_rect_xywh",
     "temporal_importance",
 )
 

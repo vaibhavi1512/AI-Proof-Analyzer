@@ -216,11 +216,13 @@
     const spatial = (video.xai && video.xai.spatialWording) || "regions contributing to the model prediction";
     const temporal = (video.xai && video.xai.temporalWording) || "frames with higher relative contribution";
     const entries = gradcamEntries(video);
-    const contact = video.gradcamContactSheet === true
+    const fullIndices = fullGradcamIndices(video);
+    const contact = fullIndices.length === 0 && video.gradcamContactSheet === true
       ? artifactSrc(artifactUrl, analysisId, "video_contact_sheet")
       : "";
+    const firstKind = entries[0] && fullIndices.indexOf(entries[0].frame_index) >= 0 ? "video_gradcam_full" : "video_gradcam";
     const preview = entries[0]
-      ? artifactSrc(artifactUrl, analysisId, "video_gradcam", entries[0].frame_index)
+      ? artifactSrc(artifactUrl, analysisId, firstKind, entries[0].frame_index)
       : "";
     const count = entries.length;
     return `
@@ -279,6 +281,11 @@
     return list.filter(function (value) { return Number.isInteger(value); });
   }
 
+  function fullGradcamIndices(video) {
+    const list = video.gradcamFullFrameIndices || video.gradcam_full_frame_indices;
+    return Array.isArray(list) ? list.filter(function (value) { return Number.isInteger(value); }) : [];
+  }
+
   /**
    * Video-only readiness facts. Returns null when video_analysis is absent
    * so the existing image checklist keeps using heatmap, overlay, and confidence.
@@ -328,11 +335,13 @@
     const entries = gradcamEntries(video);
     const requested = Number(opts.selectedFrame);
     const selected = entries.find(function (frame) { return frame.frame_index === requested; }) || entries[0] || null;
-    const contact = video.gradcamContactSheet === true
+    const fullIndices = fullGradcamIndices(video);
+    const contact = fullIndices.length === 0 && video.gradcamContactSheet === true
       ? artifactSrc(artifactUrl, opts.analysisId, "video_contact_sheet")
       : "";
+    const selectedKind = selected && fullIndices.indexOf(selected.frame_index) >= 0 ? "video_gradcam_full" : "video_gradcam";
     const selectedSrc = selected
-      ? artifactSrc(artifactUrl, opts.analysisId, "video_gradcam", selected.frame_index)
+      ? artifactSrc(artifactUrl, opts.analysisId, selectedKind, selected.frame_index)
       : "";
     let body;
     if (video.xaiAvailable !== true) {
@@ -341,7 +350,8 @@
       body = `<p class="video-missing-artifact">Grad-CAM artifact is not available for this analysis.</p>`;
     } else {
       const buttons = entries.map(function (frame) {
-        const src = artifactSrc(artifactUrl, opts.analysisId, "video_gradcam", frame.frame_index);
+        const kind = fullIndices.indexOf(frame.frame_index) >= 0 ? "video_gradcam_full" : "video_gradcam";
+        const src = artifactSrc(artifactUrl, opts.analysisId, kind, frame.frame_index);
         const meta = frameMeta(frame);
         const active = selected && frame.frame_index === selected.frame_index;
         return `<button type="button" class="heatmap-tab${active ? " active" : ""}" data-video-frame="${escapeHtml(frame.frame_index)}" data-src="${escapeHtml(src)}" data-meta="${escapeHtml(meta)}">${escapeHtml(meta)}</button>`;

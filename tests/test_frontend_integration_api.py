@@ -267,6 +267,7 @@ def test_artifact_serves_real_heatmap_file(client, app):
     resp = client.get(f"/api/analysis/{analysis_id}/artifact/heatmap")
     assert resp.status_code == 200
     assert resp.data.startswith(b"\x89PNG")
+    assert resp.headers["Cache-Control"] == "no-store"
 
 
 def test_artifact_refuses_path_outside_artifacts_root(client, app):
@@ -448,6 +449,8 @@ def test_video_gradcam_artifact_is_served_without_a_filesystem_path(client, app)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "gradcam_contact_sheet.png").write_bytes(_png((20, 12)))
     (folder / "gradcam_frame_12.png").write_bytes(_png((16, 16)))
+    (folder / "gradcam_full_frame_12.png").write_bytes(_png((64, 48)))
+    (folder / "gradcam_full_heatmap_12.png").write_bytes(_png((64, 48)))
     run = db.session.get(AnalysisRun, analysis_id)
     run.artifact_dir = str(folder.parent.parent)
     run.prediction = "FAKE"
@@ -470,6 +473,8 @@ def test_video_gradcam_artifact_is_served_without_a_filesystem_path(client, app)
             "xai_artifact_names": [
                 "gradcam_contact_sheet.png",
                 "gradcam_frame_12.png",
+                "gradcam_full_frame_12.png",
+                "gradcam_full_heatmap_12.png",
             ],
         }
     )
@@ -480,13 +485,18 @@ def test_video_gradcam_artifact_is_served_without_a_filesystem_path(client, app)
     assert body["p_fake"] == pytest.approx(0.7099)
     assert body["gradcam_contact_sheet"] is True
     assert body["gradcam_frame_indices"] == [12]
+    assert body["gradcam_full_frame_indices"] == [12]
     assert "dataset_vid" not in json.dumps(body)
     assert "gradcam_frame_12.png" not in json.dumps(body)
     sheet = client.get(f"/api/analysis/{analysis_id}/artifact/video_contact_sheet")
     frame = client.get(f"/api/analysis/{analysis_id}/artifact/video_gradcam?frame=12")
+    full = client.get(f"/api/analysis/{analysis_id}/artifact/video_gradcam_full?frame=12")
+    heatmap = client.get(f"/api/analysis/{analysis_id}/artifact/video_gradcam_full_heatmap?frame=12")
     missing = client.get(f"/api/analysis/{analysis_id}/artifact/video_gradcam?frame=99")
     assert sheet.status_code == 200 and sheet.data.startswith(b"\x89PNG")
     assert frame.status_code == 200 and frame.data.startswith(b"\x89PNG")
+    assert full.status_code == 200 and full.data.startswith(b"\x89PNG")
+    assert heatmap.status_code == 200 and heatmap.data.startswith(b"\x89PNG")
     assert missing.status_code == 404
 
 

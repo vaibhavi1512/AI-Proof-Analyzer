@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from flask import current_app
@@ -11,6 +12,7 @@ from werkzeug.datastructures import FileStorage
 from ai.datasets.utils.checksums import hash_file
 from backend.app.audit import record_audit
 from backend.app.exceptions import (
+    AuthorizationError,
     EvidenceNotFoundError,
     IntegrityCheckError,
     InvalidEvidenceError,
@@ -22,6 +24,7 @@ from backend.app.models.enums import (
     AuditEventType,
     EvidenceStatus,
     IntegrityStatus,
+    AuditEventType,
 )
 from backend.app.services.case_service import require_case_access
 from backend.app.storage import store_evidence_file
@@ -148,3 +151,87 @@ def verify_integrity(user: User, evidence_id: int) -> dict:
         "current_sha256": current,
         "integrity_status": status,
     }
+
+
+def compare_integrity(user: User, evidence_ids: object) -> dict:
+    """Compare two stored ingestion hashes after checking current file integrity.
+
+    The client provides only evidence IDs. Hashes, paths, and case membership
+    always come from the authorized evidence rows.
+    """
+    if not isinstance(evidence_ids, list) or len(evidence_ids) != 2:
+        raise InvalidEvidenceError("Exactly two evidence IDs are required")
+    ids: list[int] = []
+    for value in evidence_ids:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise InvalidEvidenceError("Evidence IDs must be positive integers")
+        ids.append(value)
+    if ids[0] == ids[1]:
+        raise InvalidEvidenceError("Choose two distinct evidence items")
+
+    rows = [db.session.get(Evidence, evidence_id) for evidence_id in ids]
+    # Use one generic not-found response for missing and inaccessible records.
+    if any(row is None for row in rows):
+        raise EvidenceNotFoundError("One or more evidence items were not found")
+    evidence_a, evidence_b = rows
+    try:
+        case_a = require_case_access(user, evidence_a.case_id)
+        case_b = require_case_access(user, evidence_b.case_id)
+    except AuthorizationError as exc:
+        raise EvidenceNotFoundError("One or more evidence items were not found") from exc
+    if case_a.id != case_b.id:
+        raise InvalidEvidenceError("Evidence items must belong to the same case")
+
+    # Individual file verification remains separate from stored-hash
+    # comparison. It records the existing EVIDENCE_VERIFIED audit events and
+    # never changes either ingestion hash.
+    integrity_results = []
+    for evidence in (evidence_a, evidence_b):
+        try:
+            result = verify_integrity(user, evidence.id)
+        except IntegrityCheckError:
+            result = {
+                "evidence_id": evidence.id,
+                "stored_sha256": evidence.sha256_hash,
+                "current_sha256": "",
+                "integrity_status": IntegrityStatus.ERROR.value,
+            }
+        integrity_results.append(result)
+
+    hashes = [evidence_a.sha256_hash, evidence_b.sha256_hash]
+    valid_hashes = all(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value) is not None
+        for value in hashes
+    )
+    if not valid_hashes:
+        outcome = "UNAVAILABLE"
+    else:
+        outcome = "MATCH" if hashes[0].casefold() == hashes[1].casefold() else "MISMATCH"
+
+    result = {
+        "case_id": case_a.id,
+        "outcome": outcome,
+        "evidence": [
+            {
+                "evidence_id": evidence.id,
+                "filename": evidence.original_filename,
+                "sha256": evidence.sha256_hash if valid_hashes or isinstance(evidence.sha256_hash, str) else None,
+                "integrity_status": integrity["integrity_status"],
+                "current_sha256": integrity["current_sha256"],
+            }
+            for evidence, integrity in zip((evidence_a, evidence_b), integrity_results)
+        ],
+    }
+    record_audit(
+        AuditEventType.EVIDENCE_ACCESSED,
+        user_id=user.id,
+        case_id=case_a.id,
+        details={
+            "action": "compare_integrity",
+            "evidence_ids": ids,
+            "outcome": outcome,
+            "integrity_statuses": [item["integrity_status"] for item in integrity_results],
+        },
+    )
+    db.session.commit()
+    return result

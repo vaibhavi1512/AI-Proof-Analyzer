@@ -16,7 +16,7 @@ from typing import Any
 from PIL import Image
 
 from ai.explainability.config import ColorMap, ExplainabilityConfig
-from ai.explainability.heatmap import prepare_heatmap
+from ai.explainability.heatmap import prepare_heatmap, upsample_heatmap
 from ai.explainability.overlay import apply_colormap, overlay_heatmap
 from ai.explainability.registry import ExplainerRegistry
 from ai.explainability.target_layer import TargetLayerResolver
@@ -186,7 +186,7 @@ def run_multi_explainer_comparison(
         ("original", original_image.convert("RGB"))
     ]
     total_ms = 0.0
-    out_h = cfg.output_resolution
+    output_size = (original_image.height, original_image.width)
 
     for name in names:
         key = name.strip().lower()
@@ -206,10 +206,15 @@ def run_multi_explainer_comparison(
                 target_layer=layer,
                 target_layer_name=layer_name,
             )
-            heatmap = prepare_heatmap(
+            model_heatmap = prepare_heatmap(
                 cam.raw_heatmap,
-                (out_h, out_h),
+                (cfg.output_resolution, cfg.output_resolution),
                 eps=cfg.heatmap_eps,
+                interpolation=cfg.interpolation,
+            )
+            heatmap = upsample_heatmap(
+                model_heatmap,
+                output_size,
                 interpolation=cfg.interpolation,
             )
             overlay = overlay_heatmap(

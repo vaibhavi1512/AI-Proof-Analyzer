@@ -409,6 +409,7 @@ const NAV_INVESTIGATOR = [
     { path: '#/tampering', label: 'Tampering Map', icon: 'tampering' },
     { path: '#/chain-of-custody', label: 'Chain of Custody', icon: 'custody' },
     { path: '#/integrity', label: 'Integrity', icon: 'security' },
+    { path: '#/compare-integrity', label: 'Compare Integrity', icon: 'security' },
     { path: '#/face-verification', label: 'Face Verification', icon: 'investigators' },
   ]},
   { group: 'Output', items: [
@@ -530,6 +531,7 @@ const ROUTES = {
   '#/case-detail': { render: () => renderCaseDetail(), guard: 'investigator' },
   '#/reports': { render: () => renderReports('investigator'), guard: 'investigator' },
   '#/integrity': { render: () => renderIntegrityRoute(), guard: 'investigator' },
+  '#/compare-integrity': { render: () => renderIntegrityCompareRoute(), guard: 'investigator' },
   '#/face-verification': { render: () => renderFaceVerificationRoute(), guard: 'investigator' },
   '#/profile': { render: () => renderProfile(), guard: 'investigator' },
 
@@ -1480,9 +1482,10 @@ async function loadEvidenceWithAnalysis(evidenceId) {
   } catch (err) {
     if (!(err instanceof MayaApi.ApiError && err.isNotFound)) throw err;
   }
-  const latest = isVideoEvidence(ev)
-    ? runs.slice().sort((a, b) => (b.analysis_id || 0) - (a.analysis_id || 0))[0] || null
-    : runs.find(r => r.analysis_status === 'COMPLETED') || runs[0] || null;
+  // The API returns runs newest first. Keep the selected result and its
+  // analysis_id-bound artifacts on the same run, including when the latest
+  // run failed; do not silently fall back to an older successful heatmap.
+  const latest = runs[0] || null;
   MayaApi.adapt.applyAnalysis(ev, latest);
   return { ev, analysis: latest ? MayaApi.adapt.analysis(latest) : null, runs };
 }
@@ -1535,6 +1538,7 @@ const FORENSIC_SELECTION = {
   tampering: { caseId: null },
   custody: { caseId: null },
   integrity: { caseId: null },
+  compareIntegrity: { caseId: null },
   face: { caseId: null },
 };
 
@@ -2088,6 +2092,95 @@ async function renderIntegrityRoute() {
 /* Plain-language explanation of every reason_code the Phase 5 pipeline can
    return (ai/face_verification/types.py). Nothing here changes the decision —
    it only makes the backend's own reason readable. */
+async function renderIntegrityCompareRoute() {
+  const params = window.__routeParams;
+  const cases = (await MayaApi.cases.list()).map(MayaApi.adapt.case);
+  const caseParam = params.get('case');
+  const selectedCaseId = cases.some(c => String(c.backendId) === String(caseParam))
+    ? String(caseParam) : (cases[0] ? String(cases[0].backendId) : null);
+  if (selectedCaseId) FORENSIC_SELECTION.compareIntegrity = { caseId: selectedCaseId };
+  let evidence = [];
+  let loadError = '';
+  if (selectedCaseId) {
+    try {
+      evidence = (await MayaApi.evidence.listByCase(selectedCaseId))
+        .map(raw => MayaApi.adapt.evidence(raw, selectedCaseId));
+    } catch (err) { loadError = err.message || 'Unable to load case evidence.'; }
+  }
+
+  window.__postRender = () => {
+    const caseSelect = $('#integrityCompareCase');
+    const button = $('#integrityCompareButton');
+    const selection = $('#integrityCompareSelection');
+    const output = $('#integrityCompareResult');
+    const boxes = Array.from(document.querySelectorAll('[data-integrity-compare-evidence]'));
+    if (caseSelect) caseSelect.addEventListener('change', () => {
+      FORENSIC_SELECTION.compareIntegrity = { caseId: caseSelect.value };
+      location.hash = `#/compare-integrity?case=${encodeURIComponent(caseSelect.value)}`;
+    });
+    const selectedRows = () => boxes.filter(box => box.checked)
+      .map(box => evidence.find(item => String(item.backendId) === box.value)).filter(Boolean);
+    const refresh = () => {
+      const rows = selectedRows();
+      if (selection) selection.innerHTML = rows.length
+        ? rows.map(item => `<div><b>EV-${escapeHtml(item.backendId)}</b> — ${escapeHtml(item.filename)}</div>`).join('')
+        : 'Select two distinct evidence items.';
+      if (button) button.disabled = rows.length !== 2;
+    };
+    boxes.forEach(box => box.addEventListener('change', () => {
+      if (boxes.filter(item => item.checked).length > 2) {
+        box.checked = false;
+        if (output) output.innerHTML = '<p class="integrity-compare-error" role="alert">Select exactly two evidence items.</p>';
+      } else if (output) output.innerHTML = '';
+      refresh();
+    }));
+    refresh();
+    if (!button) return;
+    button.addEventListener('click', async () => {
+      const chosen = selectedRows();
+      if (chosen.length !== 2) return;
+      button.disabled = true;
+      boxes.forEach(box => { box.disabled = true; });
+      if (output) output.innerHTML = '<p role="status">Comparing recorded hashes and checking current file integrity…</p>';
+      try {
+        const result = await MayaApi.evidence.compareIntegrity(chosen.map(item => item.backendId));
+        const outcome = ['MATCH', 'MISMATCH', 'UNAVAILABLE'].includes(result.outcome) ? result.outcome : 'UNAVAILABLE';
+        const label = outcome === 'MATCH' ? 'Exact hash match' : outcome === 'MISMATCH' ? 'Hash mismatch' : 'Unable to compare';
+        const rows = Array.isArray(result.evidence) ? result.evidence : [];
+        const items = rows.map(row => `<div class="integrity-compare-item">
+          <h4>EV-${escapeHtml(row.evidence_id)} — ${escapeHtml(row.filename || 'Unknown filename')}</h4>
+          <div><b>Recorded SHA-256</b><code>${escapeHtml(row.sha256 || 'Unavailable')}</code></div>
+          <div><b>Current file integrity</b><span>${escapeHtml(row.integrity_status || 'UNKNOWN')}</span></div>
+          ${row.current_sha256 ? `<div><b>Current SHA-256</b><code>${escapeHtml(row.current_sha256)}</code></div>` : ''}
+          ${row.integrity_status && row.integrity_status !== 'VALID' ? '<p class="integrity-compare-warning">This file does not currently verify against its ingestion hash. A matching recorded hash does not verify the current file.</p>' : ''}
+        </div>`).join('');
+        const message = outcome === 'MATCH'
+          ? 'The recorded ingestion fingerprints are identical. Review current file integrity separately.'
+          : outcome === 'MISMATCH'
+            ? 'The recorded files have different SHA-256 fingerprints. A mismatch means the files differ; it does not by itself prove malicious tampering.'
+            : 'One or both recorded SHA-256 values are missing or malformed, so no reliable comparison is available.';
+        if (output) output.innerHTML = `<div class="integrity-compare-outcome ${outcome.toLowerCase()}" role="status"><h3>${label}</h3><p>${message}</p></div><p>Case ID: ${escapeHtml(result.case_id)}</p><div class="integrity-compare-results">${items}</div>`;
+      } catch (err) {
+        if (output) output.innerHTML = `<p class="integrity-compare-error" role="alert">${escapeHtml(err.message || 'Comparison failed.')}</p>`;
+      } finally {
+        boxes.forEach(box => { box.disabled = false; });
+        refresh();
+      }
+    });
+  };
+
+  const inner = `<p class="page-sub">Compare server-recorded SHA-256 fingerprints for two items in the same case. Current file integrity is checked separately.</p>
+    ${cases.length ? `<div class="card integrity-compare-card"><label for="integrityCompareCase">Case</label>
+      <select id="integrityCompareCase" class="integrity-compare-case-select">${cases.map(c => `<option value="${escapeHtml(c.backendId)}" ${String(c.backendId) === String(selectedCaseId) ? 'selected' : ''}>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.name)}</option>`).join('')}</select></div>`
+      : '<div class="card"><p>No cases are available.</p></div>'}
+    ${selectedCaseId ? `<div class="card integrity-compare-card"><div class="panel-title"><h3>Evidence in this case</h3><span class="sub">Select two distinct items</span></div>
+      ${loadError ? `<p class="integrity-compare-error" role="alert">${escapeHtml(loadError)}</p>` : evidence.length ? `<div class="integrity-compare-list">${evidence.map(item => `<label class="integrity-compare-option"><input type="checkbox" data-integrity-compare-evidence value="${escapeHtml(item.backendId)}"><span><b>EV-${escapeHtml(item.backendId)}</b><span>${escapeHtml(item.filename)}</span></span><small>${escapeHtml(item.sha256 || 'SHA-256 unavailable')}</small></label>`).join('')}</div>` : '<p>No evidence in this case yet.</p>'}
+      <div class="integrity-compare-selected"><b>Selection</b><div id="integrityCompareSelection">Select two distinct evidence items.</div></div>
+      <button class="btn btn-primary" id="integrityCompareButton" disabled>Compare Integrity</button><div id="integrityCompareResult" aria-live="polite"></div>
+      <p class="integrity-compare-disclaimer">A mismatch means the evidence bytes differ. It does not by itself establish malicious tampering. Individual integrity status checks whether each stored file still matches its ingestion hash.</p></div>` : ''}`;
+  return appShell('investigator', '#/compare-integrity', 'Compare Integrity', inner);
+}
+
 const FACE_REASON_TEXT = {
   OK: 'Both images yielded exactly one usable face; the decision came from the similarity score against the threshold.',
   INCONCLUSIVE_SCORE: 'Similarity fell between the no-match and match thresholds, so the service refused to force a decision.',

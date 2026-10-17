@@ -111,6 +111,10 @@
   const evidence = {
     listByCase: (caseId) => request(`/api/evidence/cases/${caseId}`),
     get: (id) => request(`/api/evidence/${id}`),
+    compareIntegrity: (evidenceIds) => request('/api/evidence/compare-integrity', {
+      method: 'POST',
+      json: { evidence_ids: evidenceIds },
+    }),
     verifyIntegrity: (id) => request(`/api/evidence/${id}/verify-integrity`, { method: 'POST' }),
     custody: (id) => request(`/api/evidence/${id}/custody`),
     analyses: (id) => request(`/api/evidence/${id}/analyses`),
@@ -351,6 +355,9 @@
       gradcamContactSheet: raw.gradcam_contact_sheet === true,
       gradcamFrameIndices: Array.isArray(raw.gradcam_frame_indices)
         ? raw.gradcam_frame_indices.filter((value) => Number.isInteger(value))
+        : [],
+      gradcamFullFrameIndices: Array.isArray(raw.gradcam_full_frame_indices)
+        ? raw.gradcam_full_frame_indices.filter((value) => Number.isInteger(value))
         : [],
     };
   }

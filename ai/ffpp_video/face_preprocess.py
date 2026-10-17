@@ -12,7 +12,7 @@ import numpy as np
 
 from .constants import FacePreprocessConfig
 from .exceptions import FacePreprocessingError
-from .face_crop import crop_face
+from .face_crop import crop_face_with_bounds
 from .face_detector import DetectedFace, HaarFaceDetector
 from .face_selection import METHOD_FULL_FRAME, choose_face
 from .frame_preprocess import preprocess_frame
@@ -33,6 +33,9 @@ class FrameMetadata:
     used_full_frame_fallback: bool
     detected_face_count: int
     selection_method: str
+    source_frame_width: int
+    source_frame_height: int
+    model_input_rect_xywh: tuple[int, int, int, int]
 
     def as_dict(self) -> dict:
         return {
@@ -46,6 +49,9 @@ class FrameMetadata:
             "used_face_crop": self.used_face_crop,
             "used_full_frame_fallback": self.used_full_frame_fallback,
             "selection_method": self.selection_method,
+            "source_frame_width": self.source_frame_width,
+            "source_frame_height": self.source_frame_height,
+            "model_input_rect_xywh": list(self.model_input_rect_xywh),
         }
 
 
@@ -56,6 +62,7 @@ class ProcessedFrame:
     array: np.ndarray
     metadata: FrameMetadata
     selected_face: DetectedFace | None
+    source_frame: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -95,12 +102,16 @@ def process_sampled_frame(
     image_height, image_width = frame.shape[:2]
     selected, selection_method = choose_face(faces, previous_face, image_width, image_height)
     cropped = None
+    crop_bounds = None
     if selected is not None:
-        cropped = crop_face(frame, selected, settings.margin)
+        crop_result = crop_face_with_bounds(frame, selected, settings.margin)
+        if crop_result is not None:
+            cropped, crop_bounds = crop_result
     use_crop = cropped is not None
     if not use_crop:
         selection_method = METHOD_FULL_FRAME
     source = cropped if use_crop else frame
+    input_rect = crop_bounds if use_crop else (0, 0, image_width, image_height)
     array = preprocess_frame(source, image_size=settings.image_size)
     if array.dtype != np.float32 or array.shape != (3, settings.image_size, settings.image_size):
         raise FacePreprocessingError(
@@ -119,11 +130,14 @@ def process_sampled_frame(
         used_full_frame_fallback=not use_crop,
         detected_face_count=len(faces),
         selection_method=selection_method,
+        source_frame_width=image_width,
+        source_frame_height=image_height,
+        model_input_rect_xywh=input_rect,
     )
     if metadata.used_face_crop == metadata.used_full_frame_fallback:
         raise FacePreprocessingError(f"Frame {sampled.frame_index} did not choose exactly one input path.")
     kept_face = selected if use_crop else None
-    return ProcessedFrame(array=array, metadata=metadata, selected_face=kept_face)
+    return ProcessedFrame(array=array, metadata=metadata, selected_face=kept_face, source_frame=frame)
 
 
 def process_sampled_video(

@@ -217,6 +217,12 @@ def _attach_video_xai_flags(public_video: dict[str, Any], names: list) -> None:
             indices.append(int(match.group(1)))
     public_video["gradcam_contact_sheet"] = "gradcam_contact_sheet.png" in {str(name) for name in names}
     public_video["gradcam_frame_indices"] = indices
+    full_indices = []
+    for name in names:
+        match = re.fullmatch(r"gradcam_full_frame_(\d+)\.png", str(name))
+        if match:
+            full_indices.append(int(match.group(1)))
+    public_video["gradcam_full_frame_indices"] = full_indices
 
 
 def _public_video_analysis(raw: dict[str, Any]) -> dict[str, Any]:
@@ -228,6 +234,9 @@ def _public_video_analysis(raw: dict[str, Any]) -> dict[str, Any]:
         "face_detected",
         "used_face_crop",
         "used_full_frame_fallback",
+        "source_frame_width",
+        "source_frame_height",
+        "model_input_rect_xywh",
         "temporal_importance",
     )
 

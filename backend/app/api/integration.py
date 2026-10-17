@@ -88,12 +88,16 @@ def _parse_frame_number(raw: str) -> int:
 
 def _send_file(path: Path, *, mimetype: str | None = None):
     guessed = mimetype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return send_from_directory(
+    response = send_from_directory(
         str(path.parent),
         path.name,
         mimetype=guessed,
         as_attachment=False,
     )
+    # Analysis artifacts are bound to a database run and may be regenerated;
+    # always fetch the bytes currently referenced by that run.
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _original_next_to_heatmap(run, artifacts_root: Path) -> Path:
@@ -158,7 +162,9 @@ def get_analysis_artifact(analysis_id: int, kind: str):
     stored MP4. Optional ``?frame=N`` serves that frame's existing CAM files.
     """
 
-    if kind not in _ARTIFACT_FILES and kind not in {"video_contact_sheet", "video_gradcam"}:
+    if kind not in _ARTIFACT_FILES and kind not in {
+        "video_contact_sheet", "video_gradcam", "video_gradcam_full", "video_gradcam_full_heatmap"
+    }:
         raise ValidationError(
             f"Unsupported artifact kind. Allowed: {sorted(_ARTIFACT_FILES)}"
         )
@@ -174,6 +180,12 @@ def get_analysis_artifact(analysis_id: int, kind: str):
         return _send_file(
             _video_xai_file(run, artifacts_root, f"gradcam_frame_{frame_index}.png")
         )
+    if kind in {"video_gradcam_full", "video_gradcam_full_heatmap"}:
+        if frame_raw is None or str(frame_raw).strip() == "":
+            raise ValidationError("frame is required")
+        frame_index = _parse_frame_number(str(frame_raw))
+        prefix = "gradcam_full_frame" if kind == "video_gradcam_full" else "gradcam_full_heatmap"
+        return _send_file(_video_xai_file(run, artifacts_root, f"{prefix}_{frame_index}.png"))
     if frame_raw is not None and str(frame_raw).strip() != "":
         full_path = _frame_xai_file(
             run, artifacts_root, kind, _parse_frame_number(str(frame_raw))

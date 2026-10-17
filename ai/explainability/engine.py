@@ -26,7 +26,7 @@ from ai.explainability.explanation import (
     write_explanation_report,
     write_pipeline_summary,
 )
-from ai.explainability.heatmap import prepare_heatmap
+from ai.explainability.heatmap import prepare_heatmap, upsample_heatmap
 from ai.explainability.overlay import overlay_heatmap
 from ai.explainability.registry import ExplainerRegistry, register_default_explainers
 from ai.explainability.target_layer import TargetLayerResolver
@@ -138,18 +138,25 @@ class ExplainabilityEngine:
                 self._infer_cfg,
             )
 
-            out_h = cfg.output_resolution
-            heatmap = prepare_heatmap(
+            # The classifier still receives the configured square model input.
+            # Render the CAM in source-image coordinates so its artifacts align
+            # with the complete evidence image and preserve its aspect ratio.
+            with Image.open(path) as img:
+                original = img.convert("RGB")
+            output_size = (original.height, original.width)
+            # Match the evaluator's normalization grid first, then map those
+            # normalized coordinates back onto the full source image.
+            model_heatmap = prepare_heatmap(
                 cam.raw_heatmap,
-                (out_h, out_h),
+                (cfg.output_resolution, cfg.output_resolution),
                 eps=cfg.heatmap_eps,
                 interpolation=cfg.interpolation,
             )
-
-            with Image.open(path) as img:
-                original = img.convert("RGB").resize(
-                    (out_h, out_h), Image.Resampling.BILINEAR
-                )
+            heatmap = upsample_heatmap(
+                model_heatmap,
+                output_size,
+                interpolation=cfg.interpolation,
+            )
             overlay = overlay_heatmap(
                 original,
                 heatmap,
@@ -163,7 +170,6 @@ class ExplainabilityEngine:
                 overlay=overlay,
                 artifact_dir=out_dir,
                 color_map=cfg.color_map,
-                output_size=out_h,
             )
 
             inv_id = (
@@ -236,11 +242,8 @@ class ExplainabilityEngine:
         )
         decision = decide_from_probabilities(probs[0], self._infer_cfg)
 
-        out_h = cfg.output_resolution
         with Image.open(path) as img:
-            original = img.convert("RGB").resize(
-                (out_h, out_h), Image.Resampling.BILINEAR
-            )
+            original = img.convert("RGB")
 
         result = run_multi_explainer_comparison(
             model=loaded.model,

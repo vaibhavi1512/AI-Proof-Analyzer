@@ -54,6 +54,7 @@ function rawVideo(overrides) {
     },
     gradcam_contact_sheet: overrides.contact === true,
     gradcam_frame_indices: overrides.indices || [],
+    gradcam_full_frame_indices: overrides.fullIndices || [],
   };
 }
 
@@ -201,6 +202,20 @@ test("Grad-CAM displays on the tampering map when the artifact is available", ()
   assert.match(html, /Regions contributing to the model prediction/);
   assert.match(html, /face crop/);
   assert.doesNotMatch(html, /Grad-CAM artifact is not available for this analysis/);
+});
+
+test("video screens prefer source-sized Grad-CAM artifacts when available", () => {
+  const raw = rawVideo({
+    prediction: "REAL", pFake: 0.104, faceCrops: 15, fallback: 1,
+    indices: [0, 12], fullIndices: [0, 12], contact: true,
+  });
+  const xai = screen("xai", raw);
+  const attention = screen("attention", raw);
+  assert.match(xai, /video_gradcam_full\?frame=0/);
+  assert.doesNotMatch(xai, /video_gradcam\?frame=0|video_contact_sheet/);
+  assert.match(attention, /video_gradcam_full\?frame=0/);
+  assert.match(attention, /video_gradcam_full\?frame=12/);
+  assert.doesNotMatch(attention, /video_gradcam\?frame=0|video_contact_sheet/);
 });
 
 test("Grad-CAM stays unavailable when the artifact is missing", () => {

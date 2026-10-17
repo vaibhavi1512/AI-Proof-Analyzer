@@ -46,7 +46,7 @@ from .gradcam import gradcam_from_logit
 from .lstm_model import VideoLstmV2
 from .sampling import sample_video_frames
 from .visual_model import load_visual_checkpoint
-from .visualization import save_contact_sheet, save_frame_gradcam, save_temporal_plot
+from .visualization import save_contact_sheet, save_frame_gradcam, save_full_frame_gradcam, save_temporal_plot
 
 logger = logging.getLogger("maya.ai.ffpp_video")
 
@@ -181,7 +181,7 @@ def analyze_video(
             raise XaiError("Temporal importance reordered the frames.")
         names: list[str] = []
         if artifact_dir is not None:
-            names = _write_xai_artifacts(Path(artifact_dir), processed.arrays, explanation)
+            names = _write_xai_artifacts(Path(artifact_dir), processed, explanation)
         result["xai_available"] = True
         result["xai"] = {
             "spatial_wording": SPATIAL_WORDING,
@@ -288,6 +288,9 @@ def _frame_row(metadata) -> dict:
         "face_detected": bool(metadata.face_detected),
         "used_face_crop": bool(metadata.used_face_crop),
         "used_full_frame_fallback": bool(metadata.used_full_frame_fallback),
+        "source_frame_width": int(metadata.source_frame_width),
+        "source_frame_height": int(metadata.source_frame_height),
+        "model_input_rect_xywh": list(metadata.model_input_rect_xywh),
     }
 
 
@@ -311,6 +314,9 @@ def _explain(arrays: np.ndarray, frame_rows: list[dict], visual: nn.Module, lstm
                 "face_detected": bool(item["face_detected"]),
                 "used_face_crop": bool(item["used_face_crop"]),
                 "used_full_frame_fallback": bool(item["used_full_frame_fallback"]),
+                "source_frame_width": int(item["source_frame_width"]),
+                "source_frame_height": int(item["source_frame_height"]),
+                "model_input_rect_xywh": list(item["model_input_rect_xywh"]),
                 "temporal_importance": float(importance),
                 "temporal_gradient_magnitude": float(magnitude),
             }
@@ -319,22 +325,34 @@ def _explain(arrays: np.ndarray, frame_rows: list[dict], visual: nn.Module, lstm
     return explanation
 
 
-def _write_xai_artifacts(artifact_dir: Path, arrays: np.ndarray, explanation: dict) -> list[str]:
+def _write_xai_artifacts(artifact_dir: Path, processed, explanation: dict) -> list[str]:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     frames = explanation["frames"]
     save_temporal_plot(artifact_dir / "temporal_contribution.png", frames)
     save_contact_sheet(
         artifact_dir / "gradcam_contact_sheet.png",
-        arrays,
+        processed.arrays,
         explanation["heatmaps"],
         frames,
     )
     heatmaps = explanation["heatmaps"].detach().cpu().numpy()
     frame_names: list[str] = []
+    full_names: list[str] = []
     for index, frame in enumerate(frames):
         name = f"gradcam_frame_{int(frame['frame_index'])}.png"
-        save_frame_gradcam(artifact_dir / name, arrays[index], heatmaps[index])
+        save_frame_gradcam(artifact_dir / name, processed.arrays[index], heatmaps[index])
         frame_names.append(name)
+        full_heatmap = f"gradcam_full_heatmap_{int(frame['frame_index'])}.png"
+        full_overlay = f"gradcam_full_frame_{int(frame['frame_index'])}.png"
+        source_frame = processed.frames[index]
+        save_full_frame_gradcam(
+            artifact_dir / full_heatmap,
+            artifact_dir / full_overlay,
+            source_frame.source_frame,
+            heatmaps[index],
+            source_frame.metadata.model_input_rect_xywh,
+        )
+        full_names.extend((full_heatmap, full_overlay))
     record = {
         "prediction": explanation["prediction_name"],
         "p_fake": explanation["p_fake"],
@@ -350,6 +368,9 @@ def _write_xai_artifacts(artifact_dir: Path, arrays: np.ndarray, explanation: di
                 "face_detected": frame["face_detected"],
                 "used_face_crop": frame["used_face_crop"],
                 "used_full_frame_fallback": frame["used_full_frame_fallback"],
+                "source_frame_width": frame["source_frame_width"],
+                "source_frame_height": frame["source_frame_height"],
+                "model_input_rect_xywh": frame["model_input_rect_xywh"],
                 "temporal_importance": frame["temporal_importance"],
             }
             for frame in frames
@@ -359,6 +380,7 @@ def _write_xai_artifacts(artifact_dir: Path, arrays: np.ndarray, explanation: di
             "temporal_contribution.png",
             "gradcam_contact_sheet.png",
             *frame_names,
+            *full_names,
         ],
     }
     (artifact_dir / "explanation.json").write_text(
