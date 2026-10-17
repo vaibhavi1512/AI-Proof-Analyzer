@@ -111,3 +111,44 @@ _diag_*.json
 postman/
 dataset 16.09/
 _tmp_thumb.jpg
+
+# Local TruFor environment and external evaluation clones
+.venv-trufor/
+external/TruFor/
+external/ManTraNet-pytorch/
+
+# Generated localization and model evaluation outputs
+artifacts/MAYA_GradCAM_Best_Examples/
+artifacts/localization_dataset/
+artifacts/localization_prediction.png
+artifacts/mantranet_localization/
+artifacts/maya_gradcam_diagnostic/
+artifacts/maya_video_audit_diagnostic/
+artifacts/maya_video_spatial_fix/
+artifacts/maya_video_spatial_fix_summary.json
+artifacts/trufor_controlled_eval_40/
+artifacts/trufor_smoke_test/
+
+# Temporary debugging and pre-change backups
+_maya_test_tmp_override.py
+*.before_trufor
+
+# Stray zero-byte files observed in the working tree
+/128
+/api
+/audit
+/auth
+/cd
+/certutil
+/config
+/database
+/dir
+/integrations
+/models
+/routes
+/schemas
+/security
+/services
+/storage
+/t
+/utils
